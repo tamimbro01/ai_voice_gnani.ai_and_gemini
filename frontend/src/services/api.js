@@ -1,8 +1,12 @@
 // ── Backend API Client ───────────────────────────────────────────────────────
 
+import { CONFIG } from '../config.js';
+
+const BASE_URL = CONFIG.API_BASE_URL;
+
 export const API = {
   async sendMessage({ message, conversationId, history = [], lang = 'en-IN' }) {
-    const res = await fetch('/api/chat', {
+    const res = await fetch(`${BASE_URL}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message, conversationId, history, lang }),
@@ -13,7 +17,7 @@ export const API = {
   },
 
   async synthesizeSpeech({ text, lang = 'en-IN' }) {
-    const res = await fetch('/api/tts', {
+    const res = await fetch(`${BASE_URL}/api/tts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, lang }),
@@ -23,24 +27,24 @@ export const API = {
   },
 
   async getConversations() {
-    const res = await fetch('/api/conversations');
+    const res = await fetch(`${BASE_URL}/api/conversations`);
     if (!res.ok) throw new Error('Failed to fetch conversations');
     return await res.json();
   },
 
   async getConversation(id) {
-    const res = await fetch(`/api/conversations/${id}`);
+    const res = await fetch(`${BASE_URL}/api/conversations/${id}`);
     if (!res.ok) throw new Error('Conversation not found');
     return await res.json();
   },
 
   async deleteConversation(id) {
-    const res = await fetch(`/api/conversations/${id}`, { method: 'DELETE' });
+    const res = await fetch(`${BASE_URL}/api/conversations/${id}`, { method: 'DELETE' });
     return await res.json();
   },
 
   async clearAllConversations() {
-    const res = await fetch('/api/conversations', { method: 'DELETE' });
+    const res = await fetch(`${BASE_URL}/api/conversations`, { method: 'DELETE' });
     return await res.json();
   }
 };

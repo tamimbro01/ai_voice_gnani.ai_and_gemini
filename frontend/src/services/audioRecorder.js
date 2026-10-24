@@ -1,5 +1,7 @@
 // ── Real-time Audio Recorder (PCM 16kHz) + WebSpeech Parallel Fallback ──────
 
+import { CONFIG } from '../config.js';
+
 export class AudioRecorder {
   constructor() {
     this.audioCtx = null;
@@ -79,9 +81,8 @@ export class AudioRecorder {
       }
     });
 
-    // Upstream STT WebSocket
-    const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProto}//${window.location.host}/ws/stt?lang=${encodeURIComponent(lang)}&sample_rate=16000`;
+    // Upstream STT WebSocket using CONFIG.WS_BASE_URL
+    const wsUrl = `${CONFIG.WS_BASE_URL}/ws/stt?lang=${encodeURIComponent(lang)}&sample_rate=16000`;
     this.sttWs = new WebSocket(wsUrl);
     this.sttWs.binaryType = 'arraybuffer';
 
