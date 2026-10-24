@@ -1,36 +1,32 @@
-// ── Frontend Configuration & Backend URL Resolver ────────────────────────────
+// ── Frontend Configuration & Environment Variables ───────────────────────────
 
-/**
- * 🚀 RENDER DEPLOYMENT:
- * Render-এ ব্যাকএন্ড হোস্ট করার পর যে URL পাবেন (যেমন: 'https://ai-voice-backend.onrender.com'),
- * সেটি নিচের RENDER_BACKEND_URL এ পেস্ট করে দিন।
- * লোকালহোস্টে টেস্ট করার সময় এটি খালি ('') রাখলেও অটোমেটিক কাজ করবে।
- */
-const RENDER_BACKEND_URL = ''; 
+// Read directly from Environment Variables (Vite & Vercel inject these from .env)
+const envApiUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE_URL) || '';
+const envWsUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_WS_BASE_URL) || '';
 
-// Helper to convert https:// to wss:// and http:// to ws://
+// Helper to convert HTTP URL to WebSocket URL (http:// -> ws://, https:// -> wss://)
 function toWebSocketUrl(httpUrl) {
   if (!httpUrl) return '';
   return httpUrl.replace(/^https:\/\//i, 'wss://').replace(/^http:\/\//i, 'ws://');
 }
 
-// Check if running on localhost
-const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-const isSeparatePort = isLocalhost && window.location.port !== '3000';
+// Compute API Base URL from Environment Variable
+const resolvedApiUrl = envApiUrl ? envApiUrl.replace(/\/+$/, '') : '';
+
+// Compute WebSocket Base URL from Environment Variable
+const resolvedWsUrl = envWsUrl 
+  ? envWsUrl.replace(/\/+$/, '') 
+  : (resolvedApiUrl 
+      ? toWebSocketUrl(resolvedApiUrl) 
+      : ((window.location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + window.location.host));
 
 export const CONFIG = {
-  // HTTP REST API Base URL
-  API_BASE_URL: RENDER_BACKEND_URL 
-    ? RENDER_BACKEND_URL.replace(/\/+$/, '') 
-    : (isSeparatePort ? 'http://localhost:3000' : (window.__ENV__?.API_BASE_URL || '')),
+  // Read from .env (VITE_API_BASE_URL)
+  API_BASE_URL: resolvedApiUrl,
 
-  // WebSocket Base URL
-  WS_BASE_URL: RENDER_BACKEND_URL 
-    ? toWebSocketUrl(RENDER_BACKEND_URL.replace(/\/+$/, '')) 
-    : (isSeparatePort 
-        ? 'ws://localhost:3000' 
-        : (window.__ENV__?.WS_BASE_URL || ((window.location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + window.location.host))),
+  // Read from .env (VITE_WS_BASE_URL)
+  WS_BASE_URL: resolvedWsUrl,
 };
 
-console.log('🔗 [Frontend Config] API Base:', CONFIG.API_BASE_URL || '(same origin)');
-console.log('⚡ [Frontend Config] WS Base:', CONFIG.WS_BASE_URL);
+console.log('🔗 [Environment Config] API Base:', CONFIG.API_BASE_URL || '(current host)');
+console.log('⚡ [Environment Config] WS Base:', CONFIG.WS_BASE_URL);
