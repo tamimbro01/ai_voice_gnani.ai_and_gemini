@@ -9,28 +9,25 @@ export function setupSTTWebSocket(wss, gnaniApiKey) {
     console.log(`[STT] Client connected | lang: ${lang} | rate: ${sampleRate}`);
 
     let gnaniWs = null;
-    let isClosed = false;
+    let isTerminated = false;
+    let isFinalizing = false;
     let reconnectTimer = null;
-    let audioBuffer = [];  // buffer audio chunks when WS is re-connecting
+    let audioBuffer = [];
+    let incomingPcmBuffer = Buffer.alloc(0);
 
     function connectGnani() {
-      if (isClosed) return;
+      if (isTerminated) return;
       try {
         gnaniWs = new WebSocket('wss://api.vachana.ai/stt/v3/stream', {
           headers: {
             'x-api-key-id': gnaniApiKey,
             'lang_code': lang,
-            'x-sample-rate': sampleRate,
-            'x-format': 'transcribe',
-            'x-enable-partials': 'true',
-            'x-min-silence-ms': '450',
-            'x-min-speech-ms': '200',
+            'x-sample-rate': String(sampleRate),
           },
         });
 
         gnaniWs.on('open', () => {
           console.log('[STT] Gnani stream connected');
-          // Flush any buffered audio
           if (audioBuffer.length > 0) {
             audioBuffer.forEach(chunk => {
               try { gnaniWs.send(chunk); } catch {}
@@ -46,18 +43,33 @@ export function setupSTTWebSocket(wss, gnaniApiKey) {
           try {
             const raw = data.toString();
             const msg = JSON.parse(raw);
-            console.log('[STT] Frame:', raw);
+            console.log('[STT] Gnani message:', raw);
+
+            let text = '';
+            if (msg.text) {
+              text = msg.text;
+            } else if (msg.transcript) {
+              text = msg.transcript;
+            } else if (msg.alternatives && msg.alternatives[0]?.transcript) {
+              text = msg.alternatives[0].transcript;
+            } else if (msg.output && (msg.output.literal || msg.output.normalized)) {
+              text = msg.output.literal || msg.output.normalized;
+            }
 
             if (clientWs.readyState === WebSocket.OPEN) {
-              const text = msg.text || msg.transcript || '';
               const isFinal = msg.type === 'transcript' || msg.is_final === true;
               clientWs.send(JSON.stringify({
                 type: msg.type || 'transcript',
-                text,
-                transcript: text,
+                text: text.trim(),
+                transcript: text.trim(),
                 is_final: isFinal,
                 raw: msg,
               }));
+
+              // If final transcript received, notify client that speech recognition is complete!
+              if (isFinal && text.trim()) {
+                clientWs.send(JSON.stringify({ type: 'finished', text: text.trim() }));
+              }
             }
           } catch (e) {
             console.error('[STT] Parse error:', e.message);
@@ -76,11 +88,10 @@ export function setupSTTWebSocket(wss, gnaniApiKey) {
           console.log(`[STT] Gnani closed (${code}: ${msg})`);
           gnaniWs = null;
 
-          // 1001 = Going Away (server-initiated idle timeout); auto-reconnect if still recording
-          if (!isClosed && (code === 1001 || code === 1000 || code === 1005)) {
-            console.log('[STT] Auto-reconnecting to Gnani in 300ms...');
-            reconnectTimer = setTimeout(connectGnani, 300);
-          } else if (clientWs.readyState === WebSocket.OPEN && !isClosed) {
+          if (!isTerminated && (code === 1001 || code === 1000 || code === 1005)) {
+            console.log('[STT] Reconnecting to Gnani in 200ms...');
+            reconnectTimer = setTimeout(connectGnani, 200);
+          } else if (clientWs.readyState === WebSocket.OPEN && !isTerminated) {
             clientWs.send(JSON.stringify({ type: 'status', status: 'disconnected' }));
           }
         });
@@ -90,37 +101,66 @@ export function setupSTTWebSocket(wss, gnaniApiKey) {
       }
     }
 
-    // Initial connection
     connectGnani();
 
-    // Forward client audio to Gnani
-    clientWs.on('message', (data) => {
-      if (Buffer.isBuffer(data) || data instanceof ArrayBuffer) {
-        if (gnaniWs && gnaniWs.readyState === WebSocket.OPEN) {
-          gnaniWs.send(data);
-        } else {
-          // Buffer the audio while reconnecting (max 100 chunks)
-          if (audioBuffer.length < 100) audioBuffer.push(data);
+    async function flushAndFinalize() {
+      if (isFinalizing) return;
+      isFinalizing = true;
+
+      // 1. Send any remaining bytes padded to 1024
+      if (incomingPcmBuffer.length > 0 && gnaniWs && gnaniWs.readyState === WebSocket.OPEN) {
+        const padded = Buffer.alloc(1024);
+        incomingPcmBuffer.copy(padded);
+        try { gnaniWs.send(padded); } catch {}
+        incomingPcmBuffer = Buffer.alloc(0);
+      }
+
+      // 2. Stream 30 silence frames (approx 1 sec) to trigger Gnani VAD speech_end & final transcript
+      if (gnaniWs && gnaniWs.readyState === WebSocket.OPEN) {
+        const silence = Buffer.alloc(1024);
+        for (let i = 0; i < 30; i++) {
+          if (!gnaniWs || gnaniWs.readyState !== WebSocket.OPEN) break;
+          try { gnaniWs.send(silence); } catch {}
+          await new Promise(r => setTimeout(r, 32));
+        }
+      }
+
+      isFinalizing = false;
+    }
+
+    clientWs.on('message', async (data, isBinary) => {
+      if (isBinary) {
+        if (isFinalizing) return;
+        incomingPcmBuffer = Buffer.concat([incomingPcmBuffer, Buffer.from(data)]);
+
+        while (incomingPcmBuffer.length >= 1024) {
+          const chunk = incomingPcmBuffer.subarray(0, 1024);
+          incomingPcmBuffer = incomingPcmBuffer.subarray(1024);
+
+          if (gnaniWs && gnaniWs.readyState === WebSocket.OPEN) {
+            try { gnaniWs.send(chunk); } catch {}
+          } else {
+            if (audioBuffer.length < 150) audioBuffer.push(chunk);
+          }
         }
       } else {
         try {
           const msg = JSON.parse(data.toString());
+          console.log('[STT] Client control message:', msg);
           if (msg.type === 'stop') {
-            isClosed = true;
-            clearTimeout(reconnectTimer);
-            audioBuffer = [];
-            if (gnaniWs && gnaniWs.readyState === WebSocket.OPEN) {
-              setTimeout(() => { try { gnaniWs.close(); } catch {} }, 500);
-            }
+            await flushAndFinalize();
           }
-        } catch {}
+        } catch (e) {
+          console.warn('[STT] Control message parse error:', e.message);
+        }
       }
     });
 
     clientWs.on('close', () => {
-      isClosed = true;
+      isTerminated = true;
       clearTimeout(reconnectTimer);
       audioBuffer = [];
+      incomingPcmBuffer = Buffer.alloc(0);
       if (gnaniWs && gnaniWs.readyState === WebSocket.OPEN) {
         try { gnaniWs.close(); } catch {}
       }

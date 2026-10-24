@@ -169,6 +169,11 @@ export class AudioRecorder {
       this.sttWs.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
+          if (msg.type === 'finished') {
+            this.isFinished = true;
+            return;
+          }
+
           const text = (msg.text || msg.transcript || '').trim();
           const isFinal = msg.is_final === true || msg.type === 'transcript';
 
@@ -248,13 +253,23 @@ export class AudioRecorder {
       this.speechRecognizer = null;
     }
 
-    // Send stop control signal to Gnani
+    this.isFinished = false;
+
+    // Send stop control signal to backend to trigger Gnani VAD silence flush
     if (this.sttWs && this.sttWs.readyState === WebSocket.OPEN) {
       try { this.sttWs.send(JSON.stringify({ type: 'stop' })); } catch {}
     }
 
-    // Wait a brief 350ms window for any in-flight transcript frame from Gnani to arrive!
-    await new Promise(resolve => setTimeout(resolve, 350));
+    // Wait up to 2500ms for Gnani's final transcript or speech fallback to arrive
+    const startWait = Date.now();
+    while (Date.now() - startWait < 2500) {
+      if (this.isFinished || (this.gnaniText.trim() && !this.interimText)) {
+        break;
+      }
+      await new Promise(r => setTimeout(r, 60));
+    }
+    // Allow brief 100ms extra buffer
+    await new Promise(r => setTimeout(r, 100));
 
     if (this.sttWs) {
       try { this.sttWs.close(); } catch {}
