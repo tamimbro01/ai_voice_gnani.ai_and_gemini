@@ -1,0 +1,42 @@
+{
+  "conversations": [
+    {
+      "id": "conv_1792863387836",
+      "title": "Hello from refactored modular backend!",
+      "createdAt": "2026-10-24T17:36:27.825Z",
+      "updatedAt": "2026-10-24T17:36:27.837Z",
+      "lang": "en-IN",
+      "messages": [
+        {
+          "role": "user",
+          "text": "Hello from refactored modular backend!",
+          "timestamp": "2026-10-24T17:36:27.825Z"
+        },
+        {
+          "role": "assistant",
+          "text": "Hello! It sounds like things are running smoothly on your end. How can I help you today?",
+          "timestamp": "2026-10-24T17:36:27.837Z"
+        }
+      ]
+    },
+    {
+      "id": "conv_1792862864780",
+      "title": "Hello! Can you hear me?",
+      "createdAt": "2026-10-24T17:27:44.778Z",
+      "updatedAt": "2026-10-24T17:27:44.780Z",
+      "lang": "en-IN",
+      "messages": [
+        {
+          "role": "user",
+          "text": "Hello! Can you hear me?",
+          "timestamp": "2026-10-24T17:27:44.778Z"
+        },
+        {
+          "role": "assistant",
+          "text": "Hello! Yes, I can hear you loud and",
+          "timestamp": "2026-10-24T17:27:44.780Z"
+        }
+      ]
+    }
+  ]
+}
