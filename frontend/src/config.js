@@ -1,19 +1,35 @@
 // ── Frontend Configuration & Backend URL Resolver ────────────────────────────
 
-// By default, if frontend is served by backend, origin is the same.
-// If frontend is run on a separate port (e.g. Vite :5173 or LiveServer :5500),
-// it defaults to connecting to http://localhost:3000.
+/**
+ * 🚀 RENDER DEPLOYMENT:
+ * Render-এ ব্যাকএন্ড হোস্ট করার পর যে URL পাবেন (যেমন: 'https://ai-voice-backend.onrender.com'),
+ * সেটি নিচের RENDER_BACKEND_URL এ পেস্ট করে দিন।
+ * লোকালহোস্টে টেস্ট করার সময় এটি খালি ('') রাখলেও অটোমেটিক কাজ করবে।
+ */
+const RENDER_BACKEND_URL = ''; 
 
-const isSeparateHost = window.location.port !== '3000' && window.location.hostname === 'localhost';
+// Helper to convert https:// to wss:// and http:// to ws://
+function toWebSocketUrl(httpUrl) {
+  if (!httpUrl) return '';
+  return httpUrl.replace(/^https:\/\//i, 'wss://').replace(/^http:\/\//i, 'ws://');
+}
+
+// Check if running on localhost
+const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+const isSeparatePort = isLocalhost && window.location.port !== '3000';
 
 export const CONFIG = {
-  // Backend HTTP API Base URL (e.g. 'http://localhost:3000' or '' if same origin)
-  API_BASE_URL: isSeparateHost ? 'http://localhost:3000' : (window.__ENV__?.API_BASE_URL || ''),
+  // HTTP REST API Base URL
+  API_BASE_URL: RENDER_BACKEND_URL 
+    ? RENDER_BACKEND_URL.replace(/\/+$/, '') 
+    : (isSeparatePort ? 'http://localhost:3000' : (window.__ENV__?.API_BASE_URL || '')),
 
-  // Backend WebSocket Base URL
-  WS_BASE_URL: isSeparateHost 
-    ? 'ws://localhost:3000' 
-    : (window.__ENV__?.WS_BASE_URL || ((window.location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + window.location.host)),
+  // WebSocket Base URL
+  WS_BASE_URL: RENDER_BACKEND_URL 
+    ? toWebSocketUrl(RENDER_BACKEND_URL.replace(/\/+$/, '')) 
+    : (isSeparatePort 
+        ? 'ws://localhost:3000' 
+        : (window.__ENV__?.WS_BASE_URL || ((window.location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + window.location.host))),
 };
 
 console.log('🔗 [Frontend Config] API Base:', CONFIG.API_BASE_URL || '(same origin)');
