@@ -1,4 +1,4 @@
-// ── Web Audio Player with Browser SpeechSynthesis Fallback ──────────────────
+// ── Mobile-Compatible Web Audio Player with Fallback ──────────────────────────
 
 export class AudioPlayer {
   constructor() {
@@ -8,8 +8,9 @@ export class AudioPlayer {
   }
 
   getAudioContext() {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (!this.audioCtx || this.audioCtx.state === 'closed') {
-      this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      this.audioCtx = new AudioContextClass();
     }
     return this.audioCtx;
   }
@@ -24,7 +25,11 @@ export class AudioPlayer {
         await ctx.resume();
       }
 
-      const decodedBuffer = await ctx.decodeAudioData(arrayBuffer);
+      // decodeAudioData with both Promise and callback syntax for iOS Safari
+      const decodedBuffer = await new Promise((resolve, reject) => {
+        ctx.decodeAudioData(arrayBuffer, resolve, reject);
+      });
+
       this.activeSource = ctx.createBufferSource();
       this.activeSource.buffer = decodedBuffer;
       this.activeSource.connect(ctx.destination);
@@ -37,7 +42,7 @@ export class AudioPlayer {
 
       this.activeSource.start(0);
     } catch (err) {
-      console.warn('WAV buffer decode error, falling back:', err.message);
+      console.warn('WAV buffer decode error on mobile, using speech fallback:', err.message);
       this.isPlaying = false;
       throw err;
     }
@@ -51,22 +56,27 @@ export class AudioPlayer {
     this.stop();
     this.isPlaying = true;
 
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = lang;
-    utterance.rate = 1.05;
+    try {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = lang;
+      utterance.rate = 1.0;
 
-    utterance.onend = () => {
+      utterance.onend = () => {
+        this.isPlaying = false;
+        if (onEnded) onEnded();
+      };
+
+      utterance.onerror = () => {
+        this.isPlaying = false;
+        if (onEnded) onEnded();
+      };
+
+      window.speechSynthesis.speak(utterance);
+    } catch {
       this.isPlaying = false;
       if (onEnded) onEnded();
-    };
-
-    utterance.onerror = () => {
-      this.isPlaying = false;
-      if (onEnded) onEnded();
-    };
-
-    window.speechSynthesis.speak(utterance);
+    }
   }
 
   stop() {
@@ -75,7 +85,7 @@ export class AudioPlayer {
       this.activeSource = null;
     }
     if (window.speechSynthesis) {
-      window.speechSynthesis.cancel();
+      try { window.speechSynthesis.cancel(); } catch {}
     }
     this.isPlaying = false;
   }

@@ -1,4 +1,5 @@
-// ── Real-time Audio Recorder (PCM 16kHz) + WebSpeech Parallel Fallback ──────
+// ── Universal Mobile & Desktop Real-time Audio Recorder ────────────────────────
+// Fully compatible with iOS Safari, Android Chrome, and Desktop Browsers.
 
 import { CONFIG } from '../config.js';
 
@@ -19,35 +20,71 @@ export class AudioRecorder {
     this.onAudioLevel = null;
   }
 
+  // Linear interpolation downsampler to 16kHz PCM
+  downsampleTo16k(inputBuffer, inputSampleRate) {
+    if (inputSampleRate === 16000) return inputBuffer;
+    const ratio = inputSampleRate / 16000;
+    const outputLength = Math.round(inputBuffer.length / ratio);
+    const output = new Float32Array(outputLength);
+    let offsetResult = 0;
+    let offsetBuffer = 0;
+    while (offsetResult < output.length) {
+      const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio);
+      let sum = 0, count = 0;
+      for (let i = offsetBuffer; i < nextOffsetBuffer && i < inputBuffer.length; i++) {
+        sum += inputBuffer[i];
+        count++;
+      }
+      output[offsetResult] = count > 0 ? sum / count : 0;
+      offsetResult++;
+      offsetBuffer = nextOffsetBuffer;
+    }
+    return output;
+  }
+
+  // Convert Float32 to 16-bit linear PCM
+  float32ToInt16(float32Array) {
+    const int16 = new Int16Array(float32Array.length);
+    for (let i = 0; i < float32Array.length; i++) {
+      const s = Math.max(-1, Math.min(1, float32Array[i]));
+      int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    }
+    return int16;
+  }
+
   setupSpeechFallback(lang) {
     const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRec) {
-      this.speechRecognizer = new SpeechRec();
-      this.speechRecognizer.continuous = true;
-      this.speechRecognizer.interimResults = true;
-      this.speechRecognizer.lang = lang;
+      try {
+        this.speechRecognizer = new SpeechRec();
+        this.speechRecognizer.continuous = true;
+        this.speechRecognizer.interimResults = true;
+        this.speechRecognizer.lang = lang;
 
-      this.speechRecognizer.onresult = (event) => {
-        let interim = '';
-        let finalChunk = '';
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          const text = event.results[i][0].transcript;
-          if (event.results[i].isFinal) {
-            finalChunk += text;
-          } else {
-            interim += text;
+        this.speechRecognizer.onresult = (event) => {
+          let interim = '';
+          let finalChunk = '';
+          for (let i = event.resultIndex; i < event.results.length; ++i) {
+            const text = event.results[i][0].transcript;
+            if (event.results[i].isFinal) {
+              finalChunk += text;
+            } else {
+              interim += text;
+            }
           }
-        }
-        if (finalChunk.trim()) {
-          this.accumulatedText += (this.accumulatedText ? ' ' : '') + finalChunk.trim();
-        }
-        this.interimText = interim;
-        this.emitTranscript();
-      };
+          if (finalChunk.trim()) {
+            this.accumulatedText += (this.accumulatedText ? ' ' : '') + finalChunk.trim();
+          }
+          this.interimText = interim;
+          this.emitTranscript();
+        };
 
-      this.speechRecognizer.onerror = (e) => {
-        console.warn('[WebSpeech fallback error]:', e.error);
-      };
+        this.speechRecognizer.onerror = (e) => {
+          console.warn('[WebSpeech mobile]:', e.error);
+        };
+      } catch (err) {
+        console.warn('SpeechRecognition initialization error:', err);
+      }
     }
   }
 
@@ -64,75 +101,114 @@ export class AudioRecorder {
     this.accumulatedText = '';
     this.interimText = '';
 
-    // Audio Context
-    this.audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+    // Mobile Check: Ensure Secure Context (HTTPS or localhost)
+    if (!window.isSecureContext && window.location.hostname !== 'localhost') {
+      throw new Error('Microphone requires HTTPS on mobile devices. Please open via https:// or localhost.');
+    }
+
+    // 1. Initialize AudioContext at mobile hardware native sample rate
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) {
+      throw new Error('Web Audio API not supported on this device.');
+    }
+
+    this.audioCtx = new AudioContextClass();
+
+    // Mobile Audio Unlock: Resume context on user gesture
     if (this.audioCtx.state === 'suspended') {
       await this.audioCtx.resume();
     }
 
-    // Mic access
-    this.mediaStream = await navigator.mediaDevices.getUserMedia({
+    // iOS Audio Warmup: play 1 silent frame to unlock hardware audio pipeline
+    try {
+      const silent = this.audioCtx.createBuffer(1, 1, this.audioCtx.sampleRate);
+      const src = this.audioCtx.createBufferSource();
+      src.buffer = silent;
+      src.connect(this.audioCtx.destination);
+      src.start(0);
+    } catch {}
+
+    // 2. Request Mobile Microphone (Without rigid constraints that crash mobile browsers)
+    const mediaDevices = navigator.mediaDevices || (navigator.getUserMedia ? {
+      getUserMedia: (c) => new Promise((res, rej) => navigator.getUserMedia(c, res, rej))
+    } : null);
+
+    if (!mediaDevices || !mediaDevices.getUserMedia) {
+      throw new Error('Microphone permission not available. Ensure you are on HTTPS.');
+    }
+
+    // Universal mobile constraints (no rigid sampleRate constraint)
+    const constraints = {
       audio: {
-        channelCount: 1,
-        sampleRate: 16000,
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true,
       }
-    });
-
-    // Upstream STT WebSocket using CONFIG.WS_BASE_URL
-    const wsUrl = `${CONFIG.WS_BASE_URL}/ws/stt?lang=${encodeURIComponent(lang)}&sample_rate=16000`;
-    this.sttWs = new WebSocket(wsUrl);
-    this.sttWs.binaryType = 'arraybuffer';
-
-    this.sttWs.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        if (msg.type === 'transcript') {
-          const text = msg.transcript || msg.text || msg.result || '';
-          const isFinal = msg.is_final === true || msg.isFinal === true;
-          if (isFinal && text.trim()) {
-            this.accumulatedText += (this.accumulatedText ? ' ' : '') + text.trim();
-          } else if (text.trim()) {
-            this.interimText = text.trim();
-          }
-          this.emitTranscript();
-        }
-      } catch (e) {
-        console.error('[STT WebSocket Frame Error]:', e);
-      }
     };
 
-    // Parallel Speech Recognition for zero latency
+    try {
+      this.mediaStream = await mediaDevices.getUserMedia(constraints);
+    } catch (err) {
+      // Fallback for strict mobile devices
+      console.warn('Strict constraints failed, trying basic audio stream:', err.message);
+      this.mediaStream = await mediaDevices.getUserMedia({ audio: true });
+    }
+
+    // 3. Connect Upstream STT WebSocket
+    try {
+      const wsUrl = `${CONFIG.WS_BASE_URL}/ws/stt?lang=${encodeURIComponent(lang)}&sample_rate=16000`;
+      this.sttWs = new WebSocket(wsUrl);
+      this.sttWs.binaryType = 'arraybuffer';
+
+      this.sttWs.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'transcript') {
+            const text = msg.transcript || msg.text || msg.result || '';
+            const isFinal = msg.is_final === true || msg.isFinal === true;
+            if (isFinal && text.trim()) {
+              this.accumulatedText += (this.accumulatedText ? ' ' : '') + text.trim();
+            } else if (text.trim()) {
+              this.interimText = text.trim();
+            }
+            this.emitTranscript();
+          }
+        } catch (e) {
+          console.error('[STT WebSocket Parse Error]:', e);
+        }
+      };
+    } catch (wsErr) {
+      console.warn('STT WebSocket connect failed, relying on speech fallback:', wsErr);
+    }
+
+    // 4. Parallel Speech Recognition fallback
     this.setupSpeechFallback(lang);
     if (this.speechRecognizer) {
       try { this.speechRecognizer.start(); } catch {}
     }
 
-    // Audio Processing Node (PCM 16-bit)
+    // 5. Mobile Audio Processor Node: captures audio -> downsamples to 16kHz -> sends PCM to WebSocket
+    const sampleRate = this.audioCtx.sampleRate;
     this.micSource = this.audioCtx.createMediaStreamSource(this.mediaStream);
     this.processorNode = this.audioCtx.createScriptProcessor(4096, 1, 1);
 
     this.processorNode.onaudioprocess = (e) => {
       if (!this.isRecording) return;
-      const float32 = e.inputBuffer.getChannelData(0);
+      const inputFloat32 = e.inputBuffer.getChannelData(0);
 
-      // Simple RMS calculation for visualizer
+      // Audio Level for Waveform Animation
       if (this.onAudioLevel) {
         let sum = 0;
-        for (let i = 0; i < float32.length; i++) sum += float32[i] * float32[i];
-        const rms = Math.sqrt(sum / float32.length);
+        for (let i = 0; i < inputFloat32.length; i++) sum += inputFloat32[i] * inputFloat32[i];
+        const rms = Math.sqrt(sum / inputFloat32.length);
         this.onAudioLevel(rms);
       }
 
-      // Convert float32 to 16-bit linear PCM and send via WS
+      // Downsample from device rate (44100/48000) to 16000Hz PCM
+      const downsampled16k = this.downsampleTo16k(inputFloat32, sampleRate);
+      const int16 = this.float32ToInt16(downsampled16k);
+
       if (this.sttWs && this.sttWs.readyState === WebSocket.OPEN) {
-        const int16 = new Int16Array(float32.length);
-        for (let i = 0; i < float32.length; i++) {
-          const s = Math.max(-1, Math.min(1, float32[i]));
-          int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-        }
         this.sttWs.send(int16.buffer);
       }
     };
@@ -146,15 +222,17 @@ export class AudioRecorder {
     this.isRecording = false;
 
     if (this.processorNode) {
-      this.processorNode.disconnect();
+      try { this.processorNode.disconnect(); } catch {}
       this.processorNode = null;
     }
     if (this.micSource) {
-      this.micSource.disconnect();
+      try { this.micSource.disconnect(); } catch {}
       this.micSource = null;
     }
     if (this.mediaStream) {
-      this.mediaStream.getTracks().forEach(t => t.stop());
+      try {
+        this.mediaStream.getTracks().forEach(t => t.stop());
+      } catch {}
       this.mediaStream = null;
     }
     if (this.speechRecognizer) {
@@ -169,8 +247,7 @@ export class AudioRecorder {
       this.sttWs = null;
     }
 
-    const finalText = (this.accumulatedText.trim() || this.interimText.trim());
-    return finalText;
+    return (this.accumulatedText.trim() || this.interimText.trim());
   }
 }
 

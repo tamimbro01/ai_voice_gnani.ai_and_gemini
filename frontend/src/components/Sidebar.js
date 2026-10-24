@@ -1,4 +1,4 @@
-// ── Sidebar Component ─────────────────────────────────────────────────────
+// ── Sidebar Component (Mobile Optimized with Overlay) ─────────────────────
 
 import { store } from '../state.js';
 
@@ -16,8 +16,14 @@ export class SidebarComponent {
   }
 
   render() {
+    // Backdrop for mobile
+    this.backdrop = document.createElement('div');
+    this.backdrop.className = 'sidebar-backdrop';
+    this.container.appendChild(this.backdrop);
+
+    // Sidebar element
     this.el = document.createElement('aside');
-    this.el.className = 'sidebar';
+    this.el.className = 'sidebar' + (store.get().sidebarCollapsed ? ' collapsed' : '');
     this.el.innerHTML = `
       <div class="sidebar-header">
         <div class="logo">
@@ -61,9 +67,20 @@ export class SidebarComponent {
     this.convList = this.el.querySelector('#sidebarConvList');
   }
 
+  closeOnMobile() {
+    if (window.innerWidth <= 768) {
+      store.set({ sidebarCollapsed: true });
+    }
+  }
+
   bindEvents() {
+    this.backdrop.addEventListener('click', () => {
+      store.set({ sidebarCollapsed: true });
+    });
+
     this.el.querySelector('#sidebarNewChatBtn').addEventListener('click', () => {
       if (this.onNewChat) this.onNewChat();
+      this.closeOnMobile();
     });
 
     this.el.querySelector('#sidebarClearAllBtn').addEventListener('click', () => {
@@ -77,12 +94,14 @@ export class SidebarComponent {
         const lang = btn.dataset.lang;
         store.set({ currentLang: lang });
         if (this.onLanguageChange) this.onLanguageChange(lang, btn.textContent.trim());
+        this.closeOnMobile();
       });
     });
 
     store.on('change', (state, updates) => {
       if (updates.sidebarCollapsed !== undefined) {
         this.el.classList.toggle('collapsed', state.sidebarCollapsed);
+        this.backdrop.classList.toggle('active', !state.sidebarCollapsed && window.innerWidth <= 768);
       }
       if (updates.conversations !== undefined || updates.currentConvId !== undefined) {
         this.renderConversations(state.conversations, state.currentConvId);
@@ -115,6 +134,7 @@ export class SidebarComponent {
       item.addEventListener('click', (e) => {
         if (e.target.closest('.conv-delete')) return;
         if (this.onSelectConversation) this.onSelectConversation(item.dataset.id);
+        this.closeOnMobile();
       });
     });
 

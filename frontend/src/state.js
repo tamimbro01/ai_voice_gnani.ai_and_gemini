@@ -33,7 +33,7 @@ class Store extends EventEmitter {
       callDuration: 0,
       transcriptPreview: '',
       status: { text: 'Ready for call', type: '' }, // '', 'active', 'speaking', 'ai-thinking'
-      sidebarCollapsed: false,
+      sidebarCollapsed: typeof window !== 'undefined' && window.innerWidth <= 768,
     };
   }
 

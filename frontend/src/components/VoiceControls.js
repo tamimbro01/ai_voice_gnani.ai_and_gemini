@@ -77,7 +77,11 @@ export class VoiceControlsComponent {
   }
 
   bindEvents() {
-    this.micBtn.addEventListener('click', () => {
+    this.micBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        try { navigator.vibrate(40); } catch {}
+      }
       if (this.onToggleRecord) this.onToggleRecord();
     });
 
