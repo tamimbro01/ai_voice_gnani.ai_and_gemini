@@ -1,6 +1,25 @@
 {
   "conversations": [
     {
+      "id": "conv_1792864131708",
+      "title": "Testing config connection",
+      "createdAt": "2026-10-24T17:48:51.707Z",
+      "updatedAt": "2026-10-24T17:48:51.709Z",
+      "lang": "en-IN",
+      "messages": [
+        {
+          "role": "user",
+          "text": "Testing config connection",
+          "timestamp": "2026-10-24T17:48:51.707Z"
+        },
+        {
+          "role": "assistant",
+          "text": "I hear you loud and clear. Everything is connected and working perfectly. How can I help you today?",
+          "timestamp": "2026-10-24T17:48:51.709Z"
+        }
+      ]
+    },
+    {
       "id": "conv_1792863387836",
       "title": "Hello from refactored modular backend!",
       "createdAt": "2026-10-24T17:36:27.825Z",
