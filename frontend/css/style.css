@@ -117,6 +117,12 @@ html, body {
   -webkit-text-fill-color: transparent;
 }
 
+.sidebar-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .new-chat-btn {
   width: 36px;
   height: 36px;
@@ -134,6 +140,24 @@ html, body {
   border-color: var(--accent);
   color: var(--accent);
   transform: scale(1.04);
+}
+
+.sidebar-close-btn {
+  display: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  place-items: center;
+  cursor: pointer;
+  transition: var(--transition);
+}
+.sidebar-close-btn:hover, .sidebar-close-btn:active {
+  background: var(--surface-3);
+  color: var(--text);
+  border-color: var(--accent);
 }
 
 .sidebar-section-label {
@@ -690,47 +714,97 @@ html, body {
     left: 0;
     top: 0;
     bottom: 0;
-    z-index: 50;
-    width: 280px;
+    z-index: 100;
+    width: 290px;
     max-width: 85vw;
-    box-shadow: 12px 0 35px rgba(0, 0, 0, 0.6);
+    min-width: 0 !important;
+    transform: translateX(-105%);
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.3s;
+    visibility: hidden;
+    pointer-events: none;
+    box-shadow: 15px 0 40px rgba(0, 0, 0, 0.75);
+    background: rgba(14, 14, 24, 0.96);
+  }
+  .sidebar:not(.collapsed) {
+    transform: translateX(0);
+    visibility: visible;
+    pointer-events: auto;
   }
   .sidebar.collapsed {
-    transform: translateX(-100%);
-    width: 280px;
+    transform: translateX(-105%);
+    visibility: hidden;
+    pointer-events: none;
+    width: 290px;
+    min-width: 0 !important;
+    padding: 18px 16px;
+  }
+  .sidebar-close-btn {
+    display: grid !important;
+  }
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    z-index: 90;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
+  }
+  .sidebar-backdrop.active {
+    opacity: 1;
+    pointer-events: auto;
   }
   .topbar {
     padding: 10px 14px;
+  }
+  .topbar-center {
+    justify-content: flex-start;
+    margin-left: 6px;
   }
   .powered-badge {
     display: none;
   }
   .chat-area {
-    padding: 16px 14px;
+    padding: 14px 12px;
   }
   .message {
-    max-width: 90%;
+    max-width: 88%;
   }
   .welcome-screen {
-    padding: 20px 14px;
-    gap: 14px;
+    padding: 20px 12px;
+    gap: 12px;
+  }
+  .welcome-orb {
+    width: 76px;
+    height: 76px;
+  }
+  .welcome-icon {
+    font-size: 36px;
   }
   .welcome-screen h1 {
-    font-size: 26px;
+    font-size: 24px;
   }
   .welcome-screen p {
-    font-size: 13.5px;
+    font-size: 13px;
+    line-height: 1.5;
   }
   .feature-pills {
     gap: 6px;
   }
   .pill {
     font-size: 11px;
-    padding: 5px 10px;
+    padding: 4px 10px;
+  }
+  .voice-control-area {
+    padding: 12px 14px max(14px, env(safe-area-inset-bottom, 14px));
+    gap: 10px;
   }
   .mic-btn {
-    width: 76px;
-    height: 76px;
+    width: 72px;
+    height: 72px;
   }
   .controls-row {
     gap: 16px;

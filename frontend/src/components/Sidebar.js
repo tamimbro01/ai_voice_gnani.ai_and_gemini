@@ -1,4 +1,4 @@
-// ── Sidebar Component (Mobile Optimized with Overlay) ─────────────────────
+// ── Sidebar Component (Mobile Optimized with Close Button & Backdrop) ────────
 
 import { store } from '../state.js';
 
@@ -16,10 +16,10 @@ export class SidebarComponent {
   }
 
   render() {
-    // Backdrop for mobile
+    // Backdrop overlay attached to body for mobile
     this.backdrop = document.createElement('div');
     this.backdrop.className = 'sidebar-backdrop';
-    this.container.appendChild(this.backdrop);
+    document.body.appendChild(this.backdrop);
 
     // Sidebar element
     this.el = document.createElement('aside');
@@ -30,12 +30,20 @@ export class SidebarComponent {
           <span class="logo-icon">🎙️</span>
           <span class="logo-text">VoiceAI</span>
         </div>
-        <button class="new-chat-btn" id="sidebarNewChatBtn" title="Start New Call">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-            <line x1="12" y1="5" x2="12" y2="19"></line>
-            <line x1="5" y1="12" x2="19" y2="12"></line>
-          </svg>
-        </button>
+        <div class="sidebar-header-actions">
+          <button class="new-chat-btn" id="sidebarNewChatBtn" title="Start New Call">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+          </button>
+          <button class="sidebar-close-btn" id="sidebarCloseBtn" title="Close Sidebar">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
       </div>
 
       <div class="sidebar-section-label">Language</div>
@@ -74,19 +82,31 @@ export class SidebarComponent {
   }
 
   bindEvents() {
+    // Backdrop click closes sidebar
     this.backdrop.addEventListener('click', () => {
       store.set({ sidebarCollapsed: true });
     });
 
+    // Close button (visible on mobile)
+    const closeBtn = this.el.querySelector('#sidebarCloseBtn');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => {
+        store.set({ sidebarCollapsed: true });
+      });
+    }
+
+    // New chat button
     this.el.querySelector('#sidebarNewChatBtn').addEventListener('click', () => {
       if (this.onNewChat) this.onNewChat();
       this.closeOnMobile();
     });
 
+    // Clear all button
     this.el.querySelector('#sidebarClearAllBtn').addEventListener('click', () => {
       if (this.onClearAll) this.onClearAll();
     });
 
+    // Language buttons
     this.el.querySelectorAll('.lang-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         this.el.querySelectorAll('.lang-btn').forEach(b => b.classList.remove('active'));
@@ -98,13 +118,22 @@ export class SidebarComponent {
       });
     });
 
+    // Store state listener
     store.on('change', (state, updates) => {
       if (updates.sidebarCollapsed !== undefined) {
         this.el.classList.toggle('collapsed', state.sidebarCollapsed);
-        this.backdrop.classList.toggle('active', !state.sidebarCollapsed && window.innerWidth <= 768);
+        const isMobile = window.innerWidth <= 768;
+        this.backdrop.classList.toggle('active', !state.sidebarCollapsed && isMobile);
       }
       if (updates.conversations !== undefined || updates.currentConvId !== undefined) {
         this.renderConversations(state.conversations, state.currentConvId);
+      }
+    });
+
+    // Auto collapse on resize if under 768px
+    window.addEventListener('resize', () => {
+      if (window.innerWidth <= 768 && !store.get().sidebarCollapsed) {
+        store.set({ sidebarCollapsed: true });
       }
     });
   }
