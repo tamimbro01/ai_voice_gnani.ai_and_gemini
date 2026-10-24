@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import fs from 'fs';
 import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
 import cors from 'cors';
@@ -36,8 +37,9 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Serve frontend statically
-const frontendPath = path.join(__dirname, '..', 'frontend');
+// Serve frontend statically (check dist first for production build)
+const distPath = path.join(__dirname, '..', 'frontend', 'dist');
+const frontendPath = fs.existsSync(distPath) ? distPath : path.join(__dirname, '..', 'frontend');
 app.use(express.static(frontendPath));
 
 // REST Endpoints

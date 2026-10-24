@@ -1,10 +1,11 @@
-// ── Chat Area Component ───────────────────────────────────────────────────
+// ── Chat Area Component (Interactive Suggestions & Message Feed) ─────────
 
 import { store } from '../state.js';
 
 export class ChatAreaComponent {
-  constructor(container) {
+  constructor(container, { onSendMessage } = {}) {
     this.container = container;
+    this.onSendMessage = onSendMessage;
     this.render();
     this.bindEvents();
   }
@@ -22,12 +23,12 @@ export class ChatAreaComponent {
           <span class="welcome-icon">🎙️</span>
         </div>
         <h1>Real-time Voice AI</h1>
-        <p>Tap the microphone and start speaking. Seamless voice-to-voice calling powered by Gemini & Gnani.ai.</p>
-        <div class="feature-pills">
-          <span class="pill">⚡ Real-time STT</span>
-          <span class="pill">🤖 Gemini Flash</span>
-          <span class="pill">🔊 Human-like TTS</span>
-          <span class="pill">💾 Saved Locally</span>
+        <p>Tap the microphone and start speaking. Instant voice responses powered by Gemini & Gnani.ai.</p>
+        <div class="feature-pills" id="chatSuggestions">
+          <span class="pill suggestion-pill" data-text="Hello, how can you help me today?">👋 Say Hello</span>
+          <span class="pill suggestion-pill" data-text="আমাকে সুন্দর একটি ছোট গল্প শোনাও">🇧🇩 বাংলায় গল্প বলো</span>
+          <span class="pill suggestion-pill" data-text="Tell me an interesting science fact">🔬 Science Fact</span>
+          <span class="pill suggestion-pill" data-text="Make me laugh with a joke">😄 Tell a Joke</span>
         </div>
       </div>
       <div class="messages-container" id="chatMessagesContainer"></div>
@@ -39,6 +40,17 @@ export class ChatAreaComponent {
   }
 
   bindEvents() {
+    // Clickable suggestion pills
+    this.el.querySelectorAll('.suggestion-pill').forEach(pill => {
+      pill.style.cursor = 'pointer';
+      pill.addEventListener('click', () => {
+        const text = pill.dataset.text;
+        if (this.onSendMessage && text) {
+          this.onSendMessage(text);
+        }
+      });
+    });
+
     store.on('change', (state, updates) => {
       if (updates.messages !== undefined) {
         this.renderMessages(state.messages);

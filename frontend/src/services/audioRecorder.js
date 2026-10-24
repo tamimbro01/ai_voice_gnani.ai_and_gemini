@@ -13,7 +13,8 @@ export class AudioRecorder {
     this.speechRecognizer = null;
     this.isRecording = false;
 
-    this.accumulatedText = '';
+    this.gnaniText = '';
+    this.speechText = '';
     this.interimText = '';
 
     this.onTranscriptUpdate = null;
@@ -73,14 +74,16 @@ export class AudioRecorder {
             }
           }
           if (finalChunk.trim()) {
-            this.accumulatedText += (this.accumulatedText ? ' ' : '') + finalChunk.trim();
+            this.speechText += (this.speechText ? ' ' : '') + finalChunk.trim();
           }
-          this.interimText = interim;
+          if (interim.trim() && !this.gnaniText) {
+            this.interimText = interim.trim();
+          }
           this.emitTranscript();
         };
 
         this.speechRecognizer.onerror = (e) => {
-          console.warn('[WebSpeech mobile]:', e.error);
+          console.warn('[WebSpeech mobile/desktop info]:', e.error);
         };
       } catch (err) {
         console.warn('SpeechRecognition initialization error:', err);
@@ -88,9 +91,13 @@ export class AudioRecorder {
     }
   }
 
+  getBestTranscript() {
+    return (this.gnaniText.trim() || this.speechText.trim() || this.interimText.trim());
+  }
+
   emitTranscript() {
-    const full = (this.accumulatedText + (this.accumulatedText && this.interimText ? ' ' : '') + this.interimText).trim();
-    if (this.onTranscriptUpdate) {
+    const full = this.getBestTranscript();
+    if (this.onTranscriptUpdate && full) {
       this.onTranscriptUpdate(full);
     }
   }
@@ -98,11 +105,12 @@ export class AudioRecorder {
   async start({ lang = 'en-IN', onTranscriptUpdate, onAudioLevel }) {
     this.onTranscriptUpdate = onTranscriptUpdate;
     this.onAudioLevel = onAudioLevel;
-    this.accumulatedText = '';
+    this.gnaniText = '';
+    this.speechText = '';
     this.interimText = '';
 
     // Mobile Check: Ensure Secure Context (HTTPS or localhost)
-    if (!window.isSecureContext && window.location.hostname !== 'localhost') {
+    if (!window.isSecureContext && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
       throw new Error('Microphone requires HTTPS on mobile devices. Please open via https:// or localhost.');
     }
 
@@ -128,7 +136,7 @@ export class AudioRecorder {
       src.start(0);
     } catch {}
 
-    // 2. Request Mobile Microphone (Without rigid constraints that crash mobile browsers)
+    // 2. Request Mobile Microphone
     const mediaDevices = navigator.mediaDevices || (navigator.getUserMedia ? {
       getUserMedia: (c) => new Promise((res, rej) => navigator.getUserMedia(c, res, rej))
     } : null);
@@ -137,7 +145,6 @@ export class AudioRecorder {
       throw new Error('Microphone permission not available. Ensure you are on HTTPS.');
     }
 
-    // Universal mobile constraints (no rigid sampleRate constraint)
     const constraints = {
       audio: {
         echoCancellation: true,
@@ -149,7 +156,6 @@ export class AudioRecorder {
     try {
       this.mediaStream = await mediaDevices.getUserMedia(constraints);
     } catch (err) {
-      // Fallback for strict mobile devices
       console.warn('Strict constraints failed, trying basic audio stream:', err.message);
       this.mediaStream = await mediaDevices.getUserMedia({ audio: true });
     }
@@ -163,14 +169,15 @@ export class AudioRecorder {
       this.sttWs.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
-          if (msg.type === 'transcript') {
-            const text = msg.transcript || msg.text || msg.result || '';
-            const isFinal = msg.is_final === true || msg.isFinal === true;
-            if (isFinal && text.trim()) {
-              this.accumulatedText += (this.accumulatedText ? ' ' : '') + text.trim();
-            } else if (text.trim()) {
-              this.interimText = text.trim();
-            }
+          const text = (msg.text || msg.transcript || '').trim();
+          const isFinal = msg.is_final === true || msg.type === 'transcript';
+
+          if (isFinal && text) {
+            this.gnaniText += (this.gnaniText ? ' ' : '') + text;
+            this.interimText = '';
+            this.emitTranscript();
+          } else if (text) {
+            this.interimText = text;
             this.emitTranscript();
           }
         } catch (e) {
@@ -187,7 +194,7 @@ export class AudioRecorder {
       try { this.speechRecognizer.start(); } catch {}
     }
 
-    // 5. Mobile Audio Processor Node: captures audio -> downsamples to 16kHz -> sends PCM to WebSocket
+    // 5. Mobile Audio Processor Node
     const sampleRate = this.audioCtx.sampleRate;
     this.micSource = this.audioCtx.createMediaStreamSource(this.mediaStream);
     this.processorNode = this.audioCtx.createScriptProcessor(4096, 1, 1);
@@ -204,7 +211,7 @@ export class AudioRecorder {
         this.onAudioLevel(rms);
       }
 
-      // Downsample from device rate (44100/48000) to 16000Hz PCM
+      // Downsample to 16000Hz PCM & send
       const downsampled16k = this.downsampleTo16k(inputFloat32, sampleRate);
       const int16 = this.float32ToInt16(downsampled16k);
 
@@ -218,9 +225,10 @@ export class AudioRecorder {
     this.isRecording = true;
   }
 
-  stop() {
+  async stop() {
     this.isRecording = false;
 
+    // Disconnect audio mic stream immediately
     if (this.processorNode) {
       try { this.processorNode.disconnect(); } catch {}
       this.processorNode = null;
@@ -239,15 +247,21 @@ export class AudioRecorder {
       try { this.speechRecognizer.stop(); } catch {}
       this.speechRecognizer = null;
     }
+
+    // Send stop control signal to Gnani
+    if (this.sttWs && this.sttWs.readyState === WebSocket.OPEN) {
+      try { this.sttWs.send(JSON.stringify({ type: 'stop' })); } catch {}
+    }
+
+    // Wait a brief 350ms window for any in-flight transcript frame from Gnani to arrive!
+    await new Promise(resolve => setTimeout(resolve, 350));
+
     if (this.sttWs) {
-      if (this.sttWs.readyState === WebSocket.OPEN) {
-        try { this.sttWs.send(JSON.stringify({ type: 'stop' })); } catch {}
-        this.sttWs.close();
-      }
+      try { this.sttWs.close(); } catch {}
       this.sttWs = null;
     }
 
-    return (this.accumulatedText.trim() || this.interimText.trim());
+    return this.getBestTranscript();
   }
 }
 

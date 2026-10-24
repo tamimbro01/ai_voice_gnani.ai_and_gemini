@@ -40,8 +40,10 @@ class VoiceAgentApp {
     // 4. Topbar
     this.topbar = new TopbarComponent(this.mainArea);
 
-    // 5. Chat Area
-    this.chatArea = new ChatAreaComponent(this.mainArea);
+    // 5. Chat Area with interactive suggestions
+    this.chatArea = new ChatAreaComponent(this.mainArea, {
+      onSendMessage: (text) => this.processUserSpeech(text)
+    });
 
     // 6. Voice Controls
     this.voiceControls = new VoiceControlsComponent(this.mainArea, {
@@ -144,16 +146,25 @@ class VoiceAgentApp {
 
     if (isRecording) {
       // STOP recording
-      const finalText = audioRecorder.stop();
+      store.set({ status: { text: 'Processing speech…', type: 'ai-thinking' } });
+      const finalText = await audioRecorder.stop();
       store.set({ isRecording: false, transcriptPreview: finalText });
-      if (finalText) {
-        await this.processUserSpeech(finalText);
+
+      if (finalText && finalText.trim()) {
+        await this.processUserSpeech(finalText.trim());
       } else {
         store.set({ status: { text: 'Ready for call', type: '' } });
+        this.toast.show('🎤 No speech heard. Please speak clearly into the mic.');
       }
     } else {
       // START recording
       try {
+        // Pre-warm audio player during user click gesture for mobile playback
+        try {
+          const ctx = audioPlayer.getAudioContext();
+          if (ctx.state === 'suspended') ctx.resume();
+        } catch {}
+
         const lang = store.get().currentLang;
         store.set({
           isRecording: true,

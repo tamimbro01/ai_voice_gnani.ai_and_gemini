@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-const GEMINI_MODELS = ['gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-3.8-flash'];
+// Models in order of fastest response and lowest latency
+const GEMINI_MODELS = ['gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-flash-latest'];
 
 const SYSTEM_INSTRUCTION = `You are an ultra-fast, natural AI voice call assistant.
 You speak directly with the user over a real-time voice call.
@@ -36,7 +37,13 @@ export class GeminiService {
         }));
 
         const chat = model.startChat({ history: formattedHistory });
-        const result = await chat.sendMessage(message);
+        
+        // Timeout after 12s per model to prevent hanging
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error(`Timeout after 12s on ${modelName}`)), 12000)
+        );
+
+        const result = await Promise.race([chat.sendMessage(message), timeoutPromise]);
         const text = result.response.text();
         if (text && text.trim()) {
           return text.trim();
