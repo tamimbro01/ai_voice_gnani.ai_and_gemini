@@ -16,10 +16,10 @@ export class SidebarComponent {
   }
 
   render() {
-    // Backdrop overlay attached to body for mobile
+    // Backdrop overlay for mobile
     this.backdrop = document.createElement('div');
     this.backdrop.className = 'sidebar-backdrop';
-    document.body.appendChild(this.backdrop);
+    this.container.appendChild(this.backdrop);
 
     // Sidebar element
     this.el = document.createElement('aside');
