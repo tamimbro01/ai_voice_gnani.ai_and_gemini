@@ -18,51 +18,89 @@ export class VoiceControlsComponent {
 
   render() {
     this.el = document.createElement('div');
-    this.el.className = 'voice-control-area';
+    this.el.className = 'voice-control-area cyber-control-deck';
     this.el.innerHTML = `
+      <div class="hud-corner top-left"></div>
+      <div class="hud-corner top-right"></div>
+      <div class="hud-corner bottom-left"></div>
+      <div class="hud-corner bottom-right"></div>
+
       <div class="transcript-preview" id="ctrlTranscriptPreview">
         <span class="transcript-text" id="ctrlTranscriptText"></span>
       </div>
 
-      <div class="controls-row">
-        <div class="waveform-vis" id="ctrlWaveformVis">
-          <div class="wave-bar" style="--i:0"></div>
-          <div class="wave-bar" style="--i:1"></div>
-          <div class="wave-bar" style="--i:2"></div>
-          <div class="wave-bar" style="--i:3"></div>
-          <div class="wave-bar" style="--i:4"></div>
-          <div class="wave-bar" style="--i:5"></div>
-          <div class="wave-bar" style="--i:6"></div>
-          <div class="wave-bar" style="--i:7"></div>
-          <div class="wave-bar" style="--i:8"></div>
+      <div class="deck-grid">
+        <!-- Left Telemetry Logs -->
+        <div class="deck-col-left">
+          <p class="deck-log">> Waiting for your voice...</p>
+          <p class="deck-log">> Stay curious...</p>
+          <p class="deck-log">> The future is voice...</p>
+          <p class="deck-dash">—</p>
         </div>
 
-        <button class="mic-btn" id="ctrlMicBtn" title="Start voice conversation">
-          <div class="mic-ripple" id="ctrlMicRipple"></div>
-          <svg class="mic-icon" width="32" height="32" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 1a4 4 0 014 4v6a4 4 0 01-8 0V5a4 4 0 014-4zm0 2a2 2 0 00-2 2v6a2 2 0 004 0V5a2 2 0 00-2-2z"/>
-            <path d="M19 10a1 1 0 012 0 9 9 0 01-8 8.94V21h2a1 1 0 010 2H9a1 1 0 010-2h2v-2.06A9 9 0 013 10a1 1 0 012 0 7 7 0 0014 0z"/>
-          </svg>
-          <svg class="stop-icon hidden" width="32" height="32" viewBox="0 0 24 24" fill="currentColor">
-            <rect x="4" y="4" width="16" height="16" rx="2"/>
-          </svg>
-        </button>
+        <!-- Center Waveforms & Glowing Mic -->
+        <div class="deck-col-center">
+          <div class="deck-mic-row">
+            <div class="waveform-vis left-waves" id="ctrlWaveformVis">
+              <div class="wave-bar" style="--i:0"></div>
+              <div class="wave-bar" style="--i:1"></div>
+              <div class="wave-bar" style="--i:2"></div>
+              <div class="wave-bar" style="--i:3"></div>
+              <div class="wave-bar" style="--i:4"></div>
+              <div class="wave-bar" style="--i:5"></div>
+              <div class="wave-bar" style="--i:6"></div>
+              <div class="wave-bar" style="--i:7"></div>
+            </div>
 
-        <div class="side-controls">
-          <button class="ctrl-btn" id="ctrlSpeakToggleBtn" title="Toggle AI voice response">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/>
-            </svg>
-          </button>
-          <button class="ctrl-btn" id="ctrlStopSpeakBtn" title="Interrupt AI and speak" style="display:none;">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-              <rect x="4" y="4" width="16" height="16" rx="2"/>
-            </svg>
-          </button>
+            <div class="cyber-mic-anchor">
+              <div class="mic-glow-halo"></div>
+              <button class="mic-btn cyber-mic-button" id="ctrlMicBtn" title="Start voice conversation">
+                <div class="mic-ripple" id="ctrlMicRipple"></div>
+                <svg class="mic-icon" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/>
+                  <path d="M19 10v2a7 7 0 01-14 0v-2"/>
+                  <line x1="12" y1="19" x2="12" y2="23"/>
+                  <line x1="8" y1="23" x2="16" y2="23"/>
+                </svg>
+                <svg class="stop-icon hidden" width="26" height="26" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="4" y="4" width="16" height="16" rx="2"/>
+                </svg>
+              </button>
+            </div>
+
+            <div class="side-controls deck-side-actions">
+              <button class="ctrl-btn cyber-speaker-btn" id="ctrlSpeakToggleBtn" title="Toggle AI voice response">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/>
+                </svg>
+              </button>
+              <button class="ctrl-btn cyber-speaker-btn" id="ctrlStopSpeakBtn" title="Interrupt AI and speak" style="display:none;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="4" y="4" width="16" height="16" rx="2"/>
+                </svg>
+              </button>
+            </div>
+
+            <div class="waveform-vis right-waves" id="ctrlWaveformVisRight">
+              <div class="wave-bar" style="--i:7"></div>
+              <div class="wave-bar" style="--i:6"></div>
+              <div class="wave-bar" style="--i:5"></div>
+              <div class="wave-bar" style="--i:4"></div>
+              <div class="wave-bar" style="--i:3"></div>
+              <div class="wave-bar" style="--i:2"></div>
+              <div class="wave-bar" style="--i:1"></div>
+              <div class="wave-bar" style="--i:0"></div>
+            </div>
+          </div>
+
+          <div class="mic-hint cyber-mic-hint" id="ctrlMicHint">Click microphone to start voice conversation</div>
+        </div>
+
+        <!-- Right Watermark -->
+        <div class="deck-col-right">
+          <div class="deck-watermark script-glow">Better<br>Together</div>
         </div>
       </div>
-
-      <div class="mic-hint" id="ctrlMicHint">Click microphone to start voice conversation</div>
     `;
     this.container.appendChild(this.el);
 
@@ -71,6 +109,7 @@ export class VoiceControlsComponent {
     this.stopIcon = this.micBtn.querySelector('.stop-icon');
     this.transcriptText = this.el.querySelector('#ctrlTranscriptText');
     this.waveformVis = this.el.querySelector('#ctrlWaveformVis');
+    this.waveformVisRight = this.el.querySelector('#ctrlWaveformVisRight');
     this.micHint = this.el.querySelector('#ctrlMicHint');
     this.speakToggleBtn = this.el.querySelector('#ctrlSpeakToggleBtn');
     this.stopSpeakBtn = this.el.querySelector('#ctrlStopSpeakBtn');
@@ -136,6 +175,7 @@ export class VoiceControlsComponent {
     this.micIcon.classList.toggle('hidden', isRecording);
     this.stopIcon.classList.toggle('hidden', !isRecording);
     this.waveformVis.classList.toggle('active', isRecording);
+    if (this.waveformVisRight) this.waveformVisRight.classList.toggle('active', isRecording);
 
     if (isRecording) {
       this.startTimer();
@@ -168,19 +208,29 @@ export class VoiceControlsComponent {
   }
 
   handleAudioLevel(level) {
-    const bars = this.waveformVis.querySelectorAll('.wave-bar');
     const strength = Math.min(1, Math.max(0, level * 8));
-    bars.forEach((bar, index) => {
-      const distribution = 0.35 + Math.abs(Math.sin((index + 1) * 1.7)) * 0.65;
-      bar.style.height = `${6 + strength * distribution * 34}px`;
-    });
+    const updateBars = (container) => {
+      if (!container) return;
+      const bars = container.querySelectorAll('.wave-bar');
+      bars.forEach((bar, index) => {
+        const distribution = 0.35 + Math.abs(Math.sin((index + 1) * 1.7)) * 0.65;
+        bar.style.height = `${6 + strength * distribution * 34}px`;
+      });
+    };
+    updateBars(this.waveformVis);
+    updateBars(this.waveformVisRight);
   }
 
   stopWaveformAnimation() {
     cancelAnimationFrame(this.waveAnimFrame);
-    const bars = this.waveformVis.querySelectorAll('.wave-bar');
-    bars.forEach(bar => {
-      bar.style.height = '6px';
-    });
+    const resetBars = (container) => {
+      if (!container) return;
+      const bars = container.querySelectorAll('.wave-bar');
+      bars.forEach(bar => {
+        bar.style.height = '6px';
+      });
+    };
+    resetBars(this.waveformVis);
+    resetBars(this.waveformVisRight);
   }
 }
