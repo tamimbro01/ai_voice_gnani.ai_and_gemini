@@ -329,6 +329,10 @@ html, body {
   box-shadow: 0 0 12px var(--orange);
   animation: pulseDot 0.7s infinite;
 }
+.status-dot.error {
+  background: #ef4444;
+  box-shadow: 0 0 12px #ef4444;
+}
 @keyframes pulseDot {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }

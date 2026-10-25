@@ -5,22 +5,24 @@ import { CONFIG } from '../config.js';
 const BASE_URL = CONFIG.API_BASE_URL;
 
 export const API = {
-  async sendMessage({ message, conversationId, history = [], lang = 'en-IN' }) {
+  async sendMessage({ message, conversationId, history = [], lang = 'en-IN', signal }) {
     const res = await fetch(`${BASE_URL}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message, conversationId, history, lang }),
+      signal,
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Server request failed');
     return data;
   },
 
-  async synthesizeSpeech({ text, lang = 'en-IN' }) {
+  async synthesizeSpeech({ text, lang = 'en-IN', signal }) {
     const res = await fetch(`${BASE_URL}/api/tts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, lang }),
+      signal,
     });
     if (!res.ok) throw new Error(`TTS synthesis failed with status ${res.status}`);
     return await res.arrayBuffer();

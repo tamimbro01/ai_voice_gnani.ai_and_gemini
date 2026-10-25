@@ -79,3 +79,9 @@ Or from `backend/`:
 node server.js
 ```
 Open **http://localhost:3000** in your browser and start speaking!
+
+### Voice conversation
+
+Click the microphone once and allow microphone access. The app streams microphone PCM through the backend to Gnani Vachana STT; after a short pause it sends the recognized turn to Gemini, plays Gnani Timbre TTS, and resumes listening. Click the microphone again to end voice mode. Use the stop button beside the microphone to interrupt the current spoken reply.
+
+Microphone access requires `localhost` or HTTPS. If no transcript appears, check that `GNANI_API_KEY` is valid and that the browser has microphone permission. If Gemini reports a quota error, wait for the project's quota reset or update its Google AI billing/limits. Keep both API keys in `backend/.env`; never set them as `VITE_` variables.

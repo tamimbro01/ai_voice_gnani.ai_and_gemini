@@ -1,7 +1,9 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 // Models in order of fastest response and lowest latency
-const GEMINI_MODELS = ['gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-flash-latest'];
+// Lead with the stable Flash model that responded quickest with this project key.
+// Gemini 3.8 remains a current fallback; the former 3.5/3.1 names were stale.
+const GEMINI_MODELS = ['gemini-3.6-flash', 'gemini-3.8-flash', 'gemini-flash-latest'];
 
 const SYSTEM_INSTRUCTION = `You are an ultra-fast, natural AI voice call assistant.
 You speak directly with the user over a real-time voice call.
@@ -15,13 +17,13 @@ Rules:
 
 export class GeminiService {
   constructor(apiKey) {
-    if (!apiKey) {
-      throw new Error('GEMINI_API_KEY is not defined in environment variables');
-    }
-    this.genAI = new GoogleGenerativeAI(apiKey);
+    this.genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null;
   }
 
-  async generateResponse(message, history = []) {
+  async generateResponse(message, history = [], { signal } = {}) {
+    if (!this.genAI) {
+      throw new Error('GEMINI_API_KEY is missing. Add it to backend/.env and restart the server.');
+    }
     let lastError = null;
 
     for (const modelName of GEMINI_MODELS) {
@@ -38,18 +40,44 @@ export class GeminiService {
 
         const chat = model.startChat({ history: formattedHistory });
         
-        // Timeout after 12s per model to prevent hanging
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error(`Timeout after 12s on ${modelName}`)), 12000)
-        );
-
-        const result = await Promise.race([chat.sendMessage(message), timeoutPromise]);
+        const controller = new AbortController();
+        const abortFromCaller = () => controller.abort();
+        if (signal?.aborted) throw new Error('Gemini request was cancelled.');
+        signal?.addEventListener('abort', abortFromCaller, { once: true });
+        const timeout = setTimeout(() => controller.abort(), 15000);
+        let result;
+        try {
+          result = await chat.sendMessage(message, { signal: controller.signal });
+        } catch (err) {
+          if (controller.signal.aborted) throw new Error(`Gemini timed out after 15s on ${modelName}`);
+          throw err;
+        } finally {
+          clearTimeout(timeout);
+          signal?.removeEventListener('abort', abortFromCaller);
+        }
         const text = result.response.text();
         if (text && text.trim()) {
           return text.trim();
         }
       } catch (err) {
-        console.warn(`[GeminiService] Model ${modelName} error, trying next fallback:`, err.message);
+        if (signal?.aborted) throw err;
+        console.warn(`[GeminiService] Model ${modelName} error:`, err.message);
+        const status = err.status || err.statusCode;
+        if (status === 429) {
+          const quotaError = new Error('Gemini API quota has been reached. Wait for the quota reset or enable/increase Gemini API billing and limits.');
+          quotaError.statusCode = 429;
+          throw quotaError;
+        }
+        if (status === 401 || status === 403) {
+          const keyError = new Error('Gemini API rejected the configured key or project access. Check GEMINI_API_KEY and the Google AI project settings.');
+          keyError.statusCode = status;
+          throw keyError;
+        }
+        if (status === 400 && /api.?key|invalid.*key/i.test(err.message)) {
+          const keyError = new Error('Gemini API rejected the configured key. Check GEMINI_API_KEY and the Google AI project settings.');
+          keyError.statusCode = 401;
+          throw keyError;
+        }
         lastError = err;
       }
     }

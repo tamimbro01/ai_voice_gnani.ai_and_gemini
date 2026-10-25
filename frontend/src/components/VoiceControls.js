@@ -37,7 +37,7 @@ export class VoiceControlsComponent {
           <div class="wave-bar" style="--i:8"></div>
         </div>
 
-        <button class="mic-btn" id="ctrlMicBtn" title="Click to speak">
+        <button class="mic-btn" id="ctrlMicBtn" title="Start voice conversation">
           <div class="mic-ripple" id="ctrlMicRipple"></div>
           <svg class="mic-icon" width="32" height="32" viewBox="0 0 24 24" fill="currentColor">
             <path d="M12 1a4 4 0 014 4v6a4 4 0 01-8 0V5a4 4 0 014-4zm0 2a2 2 0 00-2 2v6a2 2 0 004 0V5a2 2 0 00-2-2z"/>
@@ -54,7 +54,7 @@ export class VoiceControlsComponent {
               <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/>
             </svg>
           </button>
-          <button class="ctrl-btn" id="ctrlStopSpeakBtn" title="Interrupt speaking" style="display:none;">
+          <button class="ctrl-btn" id="ctrlStopSpeakBtn" title="Interrupt AI and speak" style="display:none;">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
               <rect x="4" y="4" width="16" height="16" rx="2"/>
             </svg>
@@ -62,7 +62,7 @@ export class VoiceControlsComponent {
         </div>
       </div>
 
-      <div class="mic-hint" id="ctrlMicHint">Click microphone to start voice input</div>
+      <div class="mic-hint" id="ctrlMicHint">Click microphone to start voice conversation</div>
     `;
     this.container.appendChild(this.el);
 
@@ -97,6 +97,7 @@ export class VoiceControlsComponent {
       if (updates.transcriptPreview !== undefined) {
         this.transcriptText.textContent = state.transcriptPreview;
       }
+      if (updates.audioLevel !== undefined) this.handleAudioLevel(state.audioLevel);
 
       if (updates.voiceEnabled !== undefined) {
         this.speakToggleBtn.classList.toggle('muted', !state.voiceEnabled);
@@ -109,6 +110,23 @@ export class VoiceControlsComponent {
 
       if (updates.isRecording !== undefined) {
         this.handleRecordingState(state.isRecording);
+      }
+
+      if (updates.voiceModeActive !== undefined || updates.voiceState !== undefined) {
+        this.micBtn.classList.toggle('voice-mode-active', state.voiceModeActive);
+        this.micBtn.title = state.voiceModeActive ? 'Stop voice conversation' : 'Start voice conversation';
+        if (!state.isRecording) {
+          const labels = {
+            idle: 'Click microphone to start voice conversation',
+            listening: 'Listening… speak naturally. Click to stop',
+            transcribing: 'Transcribing speech…',
+            thinking: 'AI thinking…',
+            speaking: 'AI speaking… tap interrupt or speak to interrupt',
+            interrupted: 'AI interrupted. Listening…',
+            error: state.status.text || 'Voice error. Click to retry.',
+          };
+          this.micHint.textContent = labels[state.voiceState] || labels.idle;
+        }
       }
     });
   }
@@ -135,34 +153,34 @@ export class VoiceControlsComponent {
       const elapsed = Math.floor((Date.now() - start) / 1000);
       const mins = String(Math.floor(elapsed / 60)).padStart(2, '0');
       const secs = String(elapsed % 60).padStart(2, '0');
-      this.micHint.textContent = `Call in progress: ${mins}:${secs} • Click to finish`;
+      this.micHint.textContent = `${store.get().voiceState === 'recording' ? 'Recording' : 'Listening'}: ${mins}:${secs} • Click to stop`;
     }, 1000);
   }
 
   stopTimer() {
     clearInterval(this.timerInterval);
-    this.micHint.textContent = 'Click microphone to start voice input';
+    const state = store.get();
+    this.micHint.textContent = state.voiceModeActive ? 'Listening… speak naturally. Click to stop' : 'Click microphone to start voice conversation';
   }
 
   startWaveformAnimation() {
-    const bars = this.waveformVis.querySelectorAll('.wave-bar');
-    const step = () => {
-      if (!store.get().isRecording) return;
-      bars.forEach(bar => {
-        const h = Math.floor(Math.random() * 32) + 4;
-        bar.style.height = `${h}px`;
-      });
-      this.waveAnimFrame = requestAnimationFrame(step);
-    };
     cancelAnimationFrame(this.waveAnimFrame);
-    step();
+  }
+
+  handleAudioLevel(level) {
+    const bars = this.waveformVis.querySelectorAll('.wave-bar');
+    const strength = Math.min(1, Math.max(0, level * 8));
+    bars.forEach((bar, index) => {
+      const distribution = 0.35 + Math.abs(Math.sin((index + 1) * 1.7)) * 0.65;
+      bar.style.height = `${6 + strength * distribution * 34}px`;
+    });
   }
 
   stopWaveformAnimation() {
     cancelAnimationFrame(this.waveAnimFrame);
     const bars = this.waveformVis.querySelectorAll('.wave-bar');
     bars.forEach(bar => {
-      bar.style.height = '8px';
+      bar.style.height = '6px';
     });
   }
 }

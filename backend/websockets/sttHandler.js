@@ -11,9 +11,18 @@ export function setupSTTWebSocket(wss, gnaniApiKey) {
     let gnaniWs = null;
     let isTerminated = false;
     let isFinalizing = false;
-    let reconnectTimer = null;
     let audioBuffer = [];
     let incomingPcmBuffer = Buffer.alloc(0);
+
+    // Drain one 1024-byte / 16kHz PCM frame every 32ms, matching Gnani's
+    // documented real-time cadence even while its upstream socket is opening.
+    const audioDrainTimer = setInterval(() => {
+      if (!audioBuffer.length || !gnaniWs || gnaniWs.readyState !== WebSocket.OPEN) return;
+      const frame = audioBuffer.shift();
+      try { gnaniWs.send(frame); } catch (err) {
+        console.error('[STT] Audio frame send failed:', err.message);
+      }
+    }, 32);
 
     function connectGnani() {
       if (isTerminated) return;
@@ -23,17 +32,15 @@ export function setupSTTWebSocket(wss, gnaniApiKey) {
             'x-api-key-id': gnaniApiKey,
             'lang_code': lang,
             'x-sample-rate': String(sampleRate),
+            'x-vad-threshold': '0.55',
+            'x-min-silence-ms': '700',
+            'x-min-speech-ms': '100',
+            'x-min-segment-ms': '120',
           },
         });
 
         gnaniWs.on('open', () => {
           console.log('[STT] Gnani stream connected');
-          if (audioBuffer.length > 0) {
-            audioBuffer.forEach(chunk => {
-              try { gnaniWs.send(chunk); } catch {}
-            });
-            audioBuffer = [];
-          }
           if (clientWs.readyState === WebSocket.OPEN) {
             clientWs.send(JSON.stringify({ type: 'status', status: 'connected' }));
           }
@@ -43,8 +50,10 @@ export function setupSTTWebSocket(wss, gnaniApiKey) {
           try {
             const raw = data.toString();
             const msg = JSON.parse(raw);
-            console.log('[STT] Gnani message:', raw);
 
+            if (msg.type === 'error') {
+              console.error('[STT] Gnani service error:', msg.message || 'No message supplied');
+            }
             let text = '';
             if (msg.text) {
               text = msg.text;
@@ -63,7 +72,8 @@ export function setupSTTWebSocket(wss, gnaniApiKey) {
                 text: text.trim(),
                 transcript: text.trim(),
                 is_final: isFinal,
-                raw: msg,
+                segment_id: msg.segment_id,
+                message: msg.type === 'error' ? String(msg.message || 'Gnani speech recognition failed.') : undefined,
               }));
 
               // If final transcript received, notify client that speech recognition is complete!
@@ -88,11 +98,8 @@ export function setupSTTWebSocket(wss, gnaniApiKey) {
           console.log(`[STT] Gnani closed (${code}: ${msg})`);
           gnaniWs = null;
 
-          if (!isTerminated && (code === 1001 || code === 1000 || code === 1005)) {
-            console.log('[STT] Reconnecting to Gnani in 200ms...');
-            reconnectTimer = setTimeout(connectGnani, 200);
-          } else if (clientWs.readyState === WebSocket.OPEN && !isTerminated) {
-            clientWs.send(JSON.stringify({ type: 'status', status: 'disconnected' }));
+          if (clientWs.readyState === WebSocket.OPEN && !isTerminated) {
+            clientWs.send(JSON.stringify({ type: 'error', message: 'Gnani speech recognition disconnected.' }));
           }
         });
 
@@ -107,22 +114,19 @@ export function setupSTTWebSocket(wss, gnaniApiKey) {
       if (isFinalizing) return;
       isFinalizing = true;
 
-      // 1. Send any remaining bytes padded to 1024
-      if (incomingPcmBuffer.length > 0 && gnaniWs && gnaniWs.readyState === WebSocket.OPEN) {
+      // 1. Send any remaining bytes padded to a valid PCM frame.
+      if (incomingPcmBuffer.length > 0) {
         const padded = Buffer.alloc(1024);
         incomingPcmBuffer.copy(padded);
-        try { gnaniWs.send(padded); } catch {}
+        audioBuffer.push(padded);
         incomingPcmBuffer = Buffer.alloc(0);
       }
 
-      // 2. Stream 30 silence frames (approx 1 sec) to trigger Gnani VAD speech_end & final transcript
-      if (gnaniWs && gnaniWs.readyState === WebSocket.OPEN) {
-        const silence = Buffer.alloc(1024);
-        for (let i = 0; i < 30; i++) {
-          if (!gnaniWs || gnaniWs.readyState !== WebSocket.OPEN) break;
-          try { gnaniWs.send(silence); } catch {}
-          await new Promise(r => setTimeout(r, 32));
-        }
+      // 2. Queue silence behind all microphone frames to close the last VAD turn.
+      for (let i = 0; i < 30; i += 1) audioBuffer.push(Buffer.alloc(1024));
+      const flushDeadline = Date.now() + 3000;
+      while (audioBuffer.length && Date.now() < flushDeadline && gnaniWs?.readyState === WebSocket.OPEN) {
+        await new Promise(r => setTimeout(r, 50));
       }
 
       isFinalizing = false;
@@ -137,10 +141,9 @@ export function setupSTTWebSocket(wss, gnaniApiKey) {
           const chunk = incomingPcmBuffer.subarray(0, 1024);
           incomingPcmBuffer = incomingPcmBuffer.subarray(1024);
 
-          if (gnaniWs && gnaniWs.readyState === WebSocket.OPEN) {
-            try { gnaniWs.send(chunk); } catch {}
-          } else {
-            if (audioBuffer.length < 150) audioBuffer.push(chunk);
+          if (audioBuffer.length < 150) audioBuffer.push(chunk);
+          else if (clientWs.readyState === WebSocket.OPEN) {
+            clientWs.send(JSON.stringify({ type: 'error', message: 'Gnani speech stream is overloaded. Please try again.' }));
           }
         }
       } else {
@@ -158,7 +161,7 @@ export function setupSTTWebSocket(wss, gnaniApiKey) {
 
     clientWs.on('close', () => {
       isTerminated = true;
-      clearTimeout(reconnectTimer);
+      clearInterval(audioDrainTimer);
       audioBuffer = [];
       incomingPcmBuffer = Buffer.alloc(0);
       if (gnaniWs && gnaniWs.readyState === WebSocket.OPEN) {

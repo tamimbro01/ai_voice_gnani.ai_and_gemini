@@ -25,6 +25,8 @@ class Store extends EventEmitter {
     this.state = {
       isRecording: false,
       isSpeaking: false,
+      voiceModeActive: false,
+      voiceState: 'idle',
       voiceEnabled: true,
       currentLang: 'en-IN',
       currentConvId: `conv_${Date.now()}`,
@@ -32,6 +34,7 @@ class Store extends EventEmitter {
       conversations: [],
       callDuration: 0,
       transcriptPreview: '',
+      audioLevel: 0,
       status: { text: 'Ready for call', type: '' }, // '', 'active', 'speaking', 'ai-thinking'
       sidebarCollapsed: typeof window !== 'undefined' && window.innerWidth <= 768,
     };

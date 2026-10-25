@@ -14,6 +14,14 @@ import { VoiceControlsComponent } from './components/VoiceControls.js';
 class VoiceAgentApp {
   constructor() {
     this.appShell = document.getElementById('app');
+    this.turnInFlight = false;
+    this.recorderStarting = false;
+    this.voiceSessionId = 0;
+    this.ttsController = null;
+    this.chatController = null;
+    this.voiceTurnTimer = null;
+    this.idleRestartTimer = null;
+    this.pendingVoiceSegments = [];
     this.init();
   }
 
@@ -66,20 +74,14 @@ class VoiceAgentApp {
   }
 
   handleNewChat() {
-    if (store.get().isRecording) {
-      audioRecorder.stop();
-      store.set({ isRecording: false });
-    }
-    if (store.get().isSpeaking) {
-      audioPlayer.stop();
-      store.set({ isSpeaking: false });
-    }
+    this.stopVoiceMode();
 
     store.set({
       currentConvId: `conv_${Date.now()}`,
       messages: [],
       transcriptPreview: '',
-      status: { text: 'Ready for call', type: '' }
+      status: { text: 'Ready for call', type: '' },
+      voiceState: 'idle'
     });
   }
 
@@ -130,90 +132,176 @@ class VoiceAgentApp {
   }
 
   handleStopSpeaking() {
+    if (this.ttsController) this.ttsController.abort();
     audioPlayer.stop();
     store.set({
       isSpeaking: false,
-      status: { text: 'Ready for call', type: '' }
+      voiceState: 'interrupted',
+      status: { text: 'AI interrupted', type: 'active' }
     });
   }
 
   async handleToggleRecord() {
-    const { isRecording, isSpeaking } = store.get();
+    if (store.get().voiceModeActive) await this.stopVoiceMode();
+    else await this.startVoiceMode();
+  }
 
-    if (isSpeaking) {
-      this.handleStopSpeaking();
-    }
-
-    if (isRecording) {
-      // STOP recording
-      store.set({ status: { text: 'Processing speech…', type: 'ai-thinking' } });
-      const finalText = await audioRecorder.stop();
-      store.set({ isRecording: false, transcriptPreview: finalText });
-
-      if (finalText && finalText.trim()) {
-        await this.processUserSpeech(finalText.trim());
-      } else {
-        store.set({ status: { text: 'Ready for call', type: '' } });
-        this.toast.show('🎤 No speech heard. Please speak clearly into the mic.');
-      }
-    } else {
-      // START recording
-      try {
-        // Pre-warm audio player during user click gesture for mobile playback
-        try {
-          const ctx = audioPlayer.getAudioContext();
-          if (ctx.state === 'suspended') ctx.resume();
-        } catch {}
-
-        const lang = store.get().currentLang;
-        store.set({
-          isRecording: true,
-          transcriptPreview: '',
-          status: { text: 'Listening… Speak now', type: 'active' }
-        });
-
-        await audioRecorder.start({
-          lang,
-          onTranscriptUpdate: (text) => {
-            store.set({ transcriptPreview: text });
-          }
-        });
-      } catch (err) {
-        console.error('Recording start failed:', err);
-        store.set({
-          isRecording: false,
-          status: { text: 'Ready for call', type: '' }
-        });
-        this.toast.show('❌ ' + (err.message || 'Microphone error'));
+  async startVoiceMode() {
+    if (store.get().voiceModeActive) return;
+    const sessionId = ++this.voiceSessionId;
+    this.pendingVoiceSegments = [];
+    store.set({ voiceModeActive: true, voiceState: 'listening', transcriptPreview: '', status: { text: 'Requesting microphone…', type: 'active' } });
+    try {
+      // Unlock mobile playback from the explicit voice-mode gesture.
+      const ctx = audioPlayer.getAudioContext();
+      if (ctx.state === 'suspended') await ctx.resume();
+      await this.startListening(sessionId);
+    } catch (err) {
+      console.error('Voice mode start failed:', err);
+      if (sessionId === this.voiceSessionId) {
+        const message = ['NotAllowedError', 'PermissionDeniedError'].includes(err.name)
+          ? 'Microphone permission denied. Allow microphone access in browser settings, then retry.'
+          : (err.message || 'Microphone access failed. Check browser permissions.');
+        await this.stopVoiceMode({ error: message });
+        this.toast.show(`❌ ${message}`);
       }
     }
   }
 
-  async processUserSpeech(userText) {
+  async startListening(sessionId = this.voiceSessionId) {
+    if (!store.get().voiceModeActive || this.recorderStarting || store.get().isRecording || this.turnInFlight) return;
+    this.recorderStarting = true;
+    const lang = store.get().currentLang;
+    store.set({ isRecording: true, voiceState: 'listening', transcriptPreview: '', status: { text: 'Listening… speak naturally', type: 'active' } });
+    try {
+      await audioRecorder.start({
+        lang,
+        onTranscriptUpdate: text => store.set({ transcriptPreview: text }),
+        onAudioLevel: level => {
+          store.set({ audioLevel: level });
+          if (level > 0.025 && ['listening', 'transcribing'].includes(store.get().voiceState)) {
+            store.set({ voiceState: 'recording', status: { text: 'Recording…', type: 'active' } });
+          }
+        },
+        onFinalTranscript: text => this.queueVoiceTranscript(text, sessionId),
+        onError: error => this.handleVoiceError(error, sessionId),
+      });
+      if (sessionId !== this.voiceSessionId || !store.get().voiceModeActive) {
+        await audioRecorder.stop({ flush: false });
+      }
+    } catch (err) {
+      throw err;
+    } finally {
+      this.recorderStarting = false;
+    }
+  }
+
+  async stopVoiceMode({ error = '' } = {}) {
+    this.voiceSessionId += 1;
+    clearTimeout(this.voiceTurnTimer);
+    this.voiceTurnTimer = null;
+    clearTimeout(this.idleRestartTimer);
+    this.idleRestartTimer = null;
+    this.pendingVoiceSegments = [];
+    if (this.chatController) this.chatController.abort();
+    if (this.ttsController) this.ttsController.abort();
+    audioPlayer.stop();
+    if (audioRecorder.isRecording || audioRecorder.audioCtx || audioRecorder.mediaStream || audioRecorder.sttWs) {
+      await audioRecorder.stop({ flush: false });
+    }
+    store.set({
+      voiceModeActive: false,
+      isRecording: false,
+      isSpeaking: false,
+      transcriptPreview: '',
+      voiceState: error ? 'error' : 'idle',
+      status: error ? { text: error, type: 'error' } : { text: 'Ready for call', type: '' },
+    });
+  }
+
+  async handleVoiceError(error, sessionId) {
+    if (sessionId !== this.voiceSessionId || !store.get().voiceModeActive) return;
+    if (/no speech segment received for \d+ seconds/i.test(error?.message || '')) {
+      store.set({ voiceState: 'listening', status: { text: 'Listening… reconnecting Gnani speech stream', type: 'active' } });
+      if (audioRecorder.isRecording || audioRecorder.audioCtx || audioRecorder.sttWs) {
+        await audioRecorder.stop({ flush: false });
+      }
+      store.set({ isRecording: false });
+      this.idleRestartTimer = setTimeout(() => {
+        this.idleRestartTimer = null;
+        if (store.get().voiceModeActive && sessionId === this.voiceSessionId) void this.startListening(sessionId);
+      }, 250);
+      return;
+    }
+    const message = error?.name === 'NotAllowedError'
+      ? 'Microphone permission denied. Allow microphone access in browser settings and retry.'
+      : (error?.message || 'Voice recognition failed. Check the connection and retry.');
+    console.error('Voice recognition error:', message);
+    this.toast.show(message);
+    await this.stopVoiceMode({ error: message });
+  }
+
+  queueVoiceTranscript(text, sessionId) {
+    const segment = String(text || '').trim();
+    if (!segment || sessionId !== this.voiceSessionId || this.turnInFlight) return;
+    this.pendingVoiceSegments.push(segment);
+    store.set({ voiceState: 'transcribing', status: { text: 'Speech recognized. Finishing your sentence…', type: 'ai-thinking' } });
+    clearTimeout(this.voiceTurnTimer);
+    this.voiceTurnTimer = setTimeout(() => {
+      const transcript = this.pendingVoiceSegments.join(' ').trim();
+      this.pendingVoiceSegments = [];
+      this.voiceTurnTimer = null;
+      void this.handleVoiceTranscript(transcript, sessionId);
+    }, 1100);
+  }
+
+  async handleVoiceTranscript(text, sessionId) {
+    const transcript = String(text || '').trim();
+    if (!transcript || sessionId !== this.voiceSessionId || this.turnInFlight) return;
+    this.turnInFlight = true;
+    store.set({ voiceState: 'transcribing', status: { text: 'Transcript received. Thinking…', type: 'ai-thinking' } });
+    try {
+      await audioRecorder.stop({ flush: false });
+      store.set({ isRecording: false, transcriptPreview: '' });
+      await this.processUserSpeech(transcript, { voiceTurn: true });
+    } finally {
+      this.turnInFlight = false;
+      if (store.get().voiceModeActive && sessionId === this.voiceSessionId) {
+        await this.startListening(sessionId);
+      }
+    }
+  }
+
+  async processUserSpeech(userText, { voiceTurn = false } = {}) {
+    const cleanText = String(userText || '').trim();
+    if (!cleanText) return;
     const state = store.get();
     store.set({
       transcriptPreview: '',
+      voiceState: voiceTurn ? 'thinking' : state.voiceState,
       status: { text: 'AI thinking…', type: 'ai-thinking' }
     });
 
     // 1. Add user message
     const updatedMessages = [
       ...state.messages,
-      { role: 'user', text: userText, timestamp: new Date().toISOString() }
+      { role: 'user', text: cleanText, timestamp: new Date().toISOString() }
     ];
     store.set({ messages: updatedMessages });
     this.chatArea.showTyping();
+    if (voiceTurn) this.chatController = new AbortController();
 
     try {
       // 2. Call Gemini API
       const res = await API.sendMessage({
-        message: userText,
+        message: cleanText,
         conversationId: state.currentConvId,
         history: state.messages.map(m => ({
           role: m.role === 'assistant' ? 'assistant' : 'user',
           text: m.text
         })),
         lang: state.currentLang,
+        signal: voiceTurn ? this.chatController.signal : undefined,
       });
 
       this.chatArea.removeTyping();
@@ -233,34 +321,41 @@ class VoiceAgentApp {
 
       // 3. Synthesize & play voice
       if (store.get().voiceEnabled) {
-        await this.playAiVoice(aiText);
+        await this.playAiVoice(aiText, voiceTurn);
       } else {
-        store.set({ status: { text: 'Ready for call', type: '' } });
+        store.set({ voiceState: voiceTurn ? 'listening' : store.get().voiceState, status: { text: 'Ready for call', type: '' } });
       }
 
     } catch (err) {
       this.chatArea.removeTyping();
+      if (err.name === 'AbortError') return;
       console.error('Chat error:', err);
       store.set({
-        status: { text: 'Ready for call', type: '' },
+        voiceState: voiceTurn ? 'error' : store.get().voiceState,
+        status: { text: err.message || 'AI request failed', type: 'error' },
         messages: [
           ...updatedMessages,
           { role: 'assistant', text: `⚠️ ${err.message}`, timestamp: new Date().toISOString() }
         ]
       });
       this.toast.show(`Error: ${err.message}`);
+    } finally {
+      if (voiceTurn) this.chatController = null;
     }
   }
 
-  async playAiVoice(text) {
+  async playAiVoice(text, voiceTurn = false) {
+    this.ttsController = new AbortController();
     store.set({
       isSpeaking: true,
+      voiceState: 'speaking',
       status: { text: 'AI speaking…', type: 'speaking' }
     });
 
     const onPlaybackEnd = () => {
       store.set({
         isSpeaking: false,
+        voiceState: voiceTurn && store.get().voiceModeActive ? 'listening' : 'idle',
         status: { text: 'Ready for call', type: '' }
       });
     };
@@ -268,12 +363,23 @@ class VoiceAgentApp {
     try {
       const audioBuffer = await API.synthesizeSpeech({
         text,
-        lang: store.get().currentLang
+        lang: store.get().currentLang,
+        signal: this.ttsController.signal
       });
-      await audioPlayer.playWavBuffer(audioBuffer, onPlaybackEnd);
+      await audioPlayer.playWavBuffer(audioBuffer);
+      onPlaybackEnd();
     } catch (err) {
+      if (err.name === 'AbortError') return;
       console.warn('Gnani TTS buffer play failed, using fallback:', err.message);
-      audioPlayer.speakWithFallback(text, store.get().currentLang, onPlaybackEnd);
+      try {
+        await audioPlayer.speakWithFallback(text, store.get().currentLang);
+        onPlaybackEnd();
+      } catch (fallbackError) {
+        console.warn('Browser speech fallback failed:', fallbackError.message);
+        onPlaybackEnd();
+      }
+    } finally {
+      this.ttsController = null;
     }
   }
 }

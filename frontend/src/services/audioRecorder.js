@@ -10,14 +10,18 @@ export class AudioRecorder {
     this.micSource = null;
     this.processorNode = null;
     this.sttWs = null;
-    this.speechRecognizer = null;
+    this.frameTimer = null;
+    this.connectionTimer = null;
+    this.pendingAudio = [];
     this.isRecording = false;
 
     this.gnaniText = '';
-    this.speechText = '';
     this.interimText = '';
+    this.seenSegments = new Set();
 
     this.onTranscriptUpdate = null;
+    this.onFinalTranscript = null;
+    this.onError = null;
     this.onAudioLevel = null;
   }
 
@@ -53,46 +57,8 @@ export class AudioRecorder {
     return int16;
   }
 
-  setupSpeechFallback(lang) {
-    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SpeechRec) {
-      try {
-        this.speechRecognizer = new SpeechRec();
-        this.speechRecognizer.continuous = true;
-        this.speechRecognizer.interimResults = true;
-        this.speechRecognizer.lang = lang;
-
-        this.speechRecognizer.onresult = (event) => {
-          let interim = '';
-          let finalChunk = '';
-          for (let i = event.resultIndex; i < event.results.length; ++i) {
-            const text = event.results[i][0].transcript;
-            if (event.results[i].isFinal) {
-              finalChunk += text;
-            } else {
-              interim += text;
-            }
-          }
-          if (finalChunk.trim()) {
-            this.speechText += (this.speechText ? ' ' : '') + finalChunk.trim();
-          }
-          if (interim.trim() && !this.gnaniText) {
-            this.interimText = interim.trim();
-          }
-          this.emitTranscript();
-        };
-
-        this.speechRecognizer.onerror = (e) => {
-          console.warn('[WebSpeech mobile/desktop info]:', e.error);
-        };
-      } catch (err) {
-        console.warn('SpeechRecognition initialization error:', err);
-      }
-    }
-  }
-
   getBestTranscript() {
-    return (this.gnaniText.trim() || this.speechText.trim() || this.interimText.trim());
+    return this.gnaniText.trim();
   }
 
   emitTranscript() {
@@ -102,12 +68,15 @@ export class AudioRecorder {
     }
   }
 
-  async start({ lang = 'en-IN', onTranscriptUpdate, onAudioLevel }) {
+  async start({ lang = 'en-IN', onTranscriptUpdate, onFinalTranscript, onError, onAudioLevel }) {
     this.onTranscriptUpdate = onTranscriptUpdate;
+    this.onFinalTranscript = onFinalTranscript;
+    this.onError = onError;
     this.onAudioLevel = onAudioLevel;
     this.gnaniText = '';
-    this.speechText = '';
     this.interimText = '';
+    this.pendingAudio = [];
+    this.seenSegments.clear();
 
     // Mobile Check: Ensure Secure Context (HTTPS or localhost)
     if (!window.isSecureContext && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
@@ -165,12 +134,22 @@ export class AudioRecorder {
       const wsUrl = `${CONFIG.WS_BASE_URL}/ws/stt?lang=${encodeURIComponent(lang)}&sample_rate=16000`;
       this.sttWs = new WebSocket(wsUrl);
       this.sttWs.binaryType = 'arraybuffer';
+      this.connectionTimer = setTimeout(() => {
+        if (this.sttWs?.readyState !== WebSocket.OPEN && this.onError) {
+          this.onError(new Error('Gnani speech recognition did not connect. Check your network or API key.'));
+        }
+      }, 10000);
+      this.sttWs.onopen = () => clearTimeout(this.connectionTimer);
 
       this.sttWs.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
-          if (msg.type === 'finished') {
-            this.isFinished = true;
+          if (msg.type === 'error') {
+            if (this.onError) this.onError(new Error(msg.message || 'Gnani speech recognition failed.'));
+            return;
+          }
+          if (msg.type === 'status' && msg.status === 'disconnected') {
+            if (this.onError) this.onError(new Error('Gnani speech recognition disconnected.'));
             return;
           }
 
@@ -178,9 +157,13 @@ export class AudioRecorder {
           const isFinal = msg.is_final === true || msg.type === 'transcript';
 
           if (isFinal && text) {
+            if (msg.segment_id && this.seenSegments.has(msg.segment_id)) return;
+            if (msg.segment_id) this.seenSegments.add(msg.segment_id);
             this.gnaniText += (this.gnaniText ? ' ' : '') + text;
             this.interimText = '';
             this.emitTranscript();
+            this.isFinished = true;
+            if (this.onFinalTranscript) this.onFinalTranscript(text);
           } else if (text) {
             this.interimText = text;
             this.emitTranscript();
@@ -189,17 +172,21 @@ export class AudioRecorder {
           console.error('[STT WebSocket Parse Error]:', e);
         }
       };
+      this.sttWs.onerror = () => {
+        if (this.onError) this.onError(new Error('Could not connect to Gnani speech recognition. Check the server and API key.'));
+      };
+      this.sttWs.onclose = () => clearTimeout(this.connectionTimer);
     } catch (wsErr) {
-      console.warn('STT WebSocket connect failed, relying on speech fallback:', wsErr);
+      this.mediaStream?.getTracks().forEach(track => track.stop());
+      this.mediaStream = null;
+      if (this.audioCtx && this.audioCtx.state !== 'closed') {
+        try { await this.audioCtx.close(); } catch {}
+      }
+      this.audioCtx = null;
+      throw new Error(`Gnani speech recognition could not start: ${wsErr.message}`);
     }
 
-    // 4. Parallel Speech Recognition fallback
-    this.setupSpeechFallback(lang);
-    if (this.speechRecognizer) {
-      try { this.speechRecognizer.start(); } catch {}
-    }
-
-    // 5. Mobile Audio Processor Node
+    // 4. Capture actual microphone audio and pace Gnani's PCM frames.
     const sampleRate = this.audioCtx.sampleRate;
     this.micSource = this.audioCtx.createMediaStreamSource(this.mediaStream);
     this.processorNode = this.audioCtx.createScriptProcessor(4096, 1, 1);
@@ -216,21 +203,30 @@ export class AudioRecorder {
         this.onAudioLevel(rms);
       }
 
-      // Downsample to 16000Hz PCM & send
+      // Downsample to 16kHz PCM and buffer into exact 1024-byte frames.
       const downsampled16k = this.downsampleTo16k(inputFloat32, sampleRate);
       const int16 = this.float32ToInt16(downsampled16k);
-
-      if (this.sttWs && this.sttWs.readyState === WebSocket.OPEN) {
-        this.sttWs.send(int16.buffer);
+      const pcm = new Uint8Array(int16.buffer);
+      for (let i = 0; i < pcm.length; i += 1) this.pendingAudio.push(pcm[i]);
+      if (this.pendingAudio.length > 32000) {
+        const discard = Math.floor((this.pendingAudio.length - 32000) / 2) * 2;
+        this.pendingAudio.splice(0, discard);
       }
     };
+
+    this.frameTimer = setInterval(() => {
+      if (!this.sttWs || this.sttWs.readyState !== WebSocket.OPEN || this.pendingAudio.length < 1024) return;
+      const frame = new Uint8Array(1024);
+      for (let i = 0; i < frame.length; i += 1) frame[i] = this.pendingAudio.shift();
+      this.sttWs.send(frame.buffer);
+    }, 32);
 
     this.micSource.connect(this.processorNode);
     this.processorNode.connect(this.audioCtx.destination);
     this.isRecording = true;
   }
 
-  async stop() {
+  async stop({ flush = true } = {}) {
     this.isRecording = false;
 
     // Disconnect audio mic stream immediately
@@ -248,33 +244,36 @@ export class AudioRecorder {
       } catch {}
       this.mediaStream = null;
     }
-    if (this.speechRecognizer) {
-      try { this.speechRecognizer.stop(); } catch {}
-      this.speechRecognizer = null;
-    }
-
+    clearInterval(this.frameTimer);
+    this.frameTimer = null;
+    clearTimeout(this.connectionTimer);
+    this.connectionTimer = null;
+    this.pendingAudio = [];
     this.isFinished = false;
 
-    // Send stop control signal to backend to trigger Gnani VAD silence flush
-    if (this.sttWs && this.sttWs.readyState === WebSocket.OPEN) {
+    // Manual stop asks the proxy to flush VAD using valid silent PCM frames.
+    // A Gnani-finalized turn already crossed its speech boundary, so it closes fast.
+    if (flush && this.sttWs && this.sttWs.readyState === WebSocket.OPEN) {
       try { this.sttWs.send(JSON.stringify({ type: 'stop' })); } catch {}
     }
 
-    // Wait up to 2500ms for Gnani's final transcript or speech fallback to arrive
     const startWait = Date.now();
-    while (Date.now() - startWait < 2500) {
-      if (this.isFinished || (this.gnaniText.trim() && !this.interimText)) {
+    while (flush && Date.now() - startWait < 3000) {
+      if (this.isFinished || this.gnaniText.trim()) {
         break;
       }
       await new Promise(r => setTimeout(r, 60));
     }
-    // Allow brief 100ms extra buffer
-    await new Promise(r => setTimeout(r, 100));
 
     if (this.sttWs) {
       try { this.sttWs.close(); } catch {}
       this.sttWs = null;
     }
+
+    if (this.audioCtx && this.audioCtx.state !== 'closed') {
+      try { await this.audioCtx.close(); } catch {}
+    }
+    this.audioCtx = null;
 
     return this.getBestTranscript();
   }
